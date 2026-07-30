@@ -169,3 +169,19 @@ func (rec *Record) FirstStr(paths ...string) string {
 	}
 	return ""
 }
+
+// FirstInt returns the first non-zero value among several candidate paths.
+//
+// The industrial loggers nest their fields under "request" or "response"
+// depending on the direction of the exchange, so the same fact lives at two or
+// three paths. Zero is not a distinguishable value here, but none of the fields
+// this is used for — vendor IDs, unit IDs, station addresses — treat zero as
+// meaningful: unit 0 is the Modbus broadcast address, not a device.
+func (rec *Record) FirstInt(paths ...string) int {
+	for _, p := range paths {
+		if n := rec.Int(p); n != 0 {
+			return n
+		}
+	}
+	return 0
+}

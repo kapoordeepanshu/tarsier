@@ -30,14 +30,40 @@ usernames and every domain your machines looked up. Redact it, or send only the 
 
 ## Adding a device fingerprint
 
-`internal/identify/rules.go` is deliberately plain data. Adding a device means adding a line.
+**You do not need to know Go for this.** The fingerprint database lives in
+`internal/identify/data/` as plain tab-separated text. Adding a device means adding a line to
+`fingerprints.tsv`:
 
-```go
-{"hikvision", "class=camera", 0.9, 1},
-//  ^ lowercase substring to match
-//                ^ what it implies
-//                                ^ weight, 0..1
-//                                     ^ specificity: 2 if it refines a vaguer answer
+```
+server_banner	hikvision	class=camera	0.9	1
+```
+
+```
+table          which signal this applies to — see the section headings in the file
+match          a lowercase substring; the rule fires if the observed value contains it
+conclusion     os=… | class=… | vendor=…
+weight         0..1, how much this observation is worth on its own
+specificity    1 normally; 2 if it refines a vaguer answer
+```
+
+Columns are separated by **tabs**, not spaces. The other data files follow the same idea:
+`ports.tsv` for listening ports, `app_proto.tsv` for Suricata's own protocol identification,
+`oui_override.tsv` for MAC prefixes the IEEE registry gets unhelpfully wrong.
+
+### Where the data may come from
+
+Entries must be derived from **your own observations, vendor documentation, or other public-domain
+sources**.
+
+Do **not** copy rows out of Fingerbank. Their database is licensed ODbL, which is share-alike:
+anything derived from it must also be ODbL, and that would silently destroy the CC0 licence this
+database carries. The same applies to bulk-importing ja4db.com — it is someone else's dataset with
+its own terms, and everything in this repository has to be ours to give away.
+
+The `oui.tsv` file is generated, not hand-edited. Refresh it from the public IEEE registries with:
+
+```bash
+go run ./tools/genoui -fetch
 ```
 
 **On weights, which is where judgement matters:**
@@ -57,6 +83,10 @@ Be honest with these. Inflated weights produce confident wrong answers, which is
 out-of-support machine is the finding, not "it's a Windows box".
 
 Every rule needs a test in `internal/identify/identify_test.go`. Copy an existing one.
+
+`TestDataTablesAreLoaded` already checks the shape of every row — a malformed weight or an
+unrecognised conclusion fails the build, so a typo in a `.tsv` cannot quietly degrade
+identification for everyone.
 
 ---
 

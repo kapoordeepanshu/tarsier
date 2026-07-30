@@ -46,6 +46,42 @@ jobs:
           # The report must stay self-contained: no external fetches, ever.
           ! grep -Eq '(src|href)="https?://[^"]*\.(js|css|png|woff2?)' survey.html
 
+      - name: Machine-readable outputs and change detection
+        run: |
+          set -e
+          go build -o tarsier-diff ./cmd/tarsier-diff
+
+          # The JSON snapshot is what every downstream consumer depends on, and
+          # the diff is what makes this a weekly habit rather than a one-off.
+          ./tarsier-scan -json before.json -until 2026-07-26 testdata/demo-week.json
+          ./tarsier-scan -json after.json testdata/demo-week.json
+          python3 -c "import json;d=json.load(open('after.json'));assert d['schema']==1;assert len(d['devices'])==18"
+
+          # A device must resolve a vendor from the IEEE registry. If the OUI
+          # data file were ever truncated or unembedded this stays silent
+          # otherwise, and identification quietly collapses to what it was
+          # before the registry was added.
+          python3 -c "
+          import json,sys
+          d=json.load(open('after.json'))
+          named=[x for x in d['devices'] if x.get('vendor')]
+          print(len(named),'of',len(d['devices']),'devices have a vendor')
+          sys.exit(0 if len(named)>=12 else 1)"
+
+          # Exit status 1 means 'something changed', which is the contract cron
+          # depends on. Anything else is a bug.
+          ./tarsier-diff before.json after.json && { echo 'diff reported no change'; exit 1; }
+          ./tarsier-diff after.json after.json  || { echo 'identical snapshots differed'; exit 1; }
+
+          # The NetBox CSV has to stay importable.
+          ./tarsier-scan -netbox netbox.csv testdata/demo-week.json
+          python3 -c "
+          import csv
+          rows=list(csv.reader(open('netbox.csv')))
+          assert rows[0]==['address','status','dns_name','description','comments'], rows[0]
+          assert len(rows)==19, len(rows)
+          assert all('/' in r[0] for r in rows[1:])"
+
   cross-compile:
     name: Cross-compile
     runs-on: ubuntu-latest
@@ -62,6 +98,8 @@ jobs:
           for t in linux/amd64 linux/arm64 linux/arm freebsd/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 \
               go build -trimpath -o /dev/null ./cmd/tarsier-scan
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 \
+              go build -trimpath -o /dev/null ./cmd/tarsier-diff
             echo "ok  $t"
           done
 

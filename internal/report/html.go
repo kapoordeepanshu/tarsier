@@ -70,13 +70,23 @@ type Bar struct {
 }
 
 type DeviceView struct {
-	IP         string
-	Hostname   string
-	Identity   string
-	Class      string
-	Icon       template.HTML // inline SVG glyph for the device class
-	MAC        string
-	Vendor     string
+	IP        string
+	Hostname  string
+	Identity  string
+	Class     string
+	Icon      template.HTML // inline SVG glyph for the device class
+	MAC       string
+	RandomMAC bool
+	Vendor    string
+	// Model, Firmware and Serial are populated where a protocol stated them
+	// outright, which in practice means industrial equipment. They are the
+	// fields IEC 62443-3-2 asks for, and an EtherNet/IP identity reply hands
+	// them over unprompted — so the report has to show them, or the one place
+	// this tool has data nobody else does would be invisible in its own output.
+	Model      string
+	Firmware   string
+	Serial     string
+	OTIDs      string
 	Users      string
 	Services   string
 	Protocols  string
@@ -186,7 +196,12 @@ func Build(source string, total, skipped int, devices []*identify.Device,
 			IP:         d.IP,
 			Hostname:   d.BestHostname(),
 			MAC:        d.MAC,
+			RandomMAC:  d.RandomMAC,
 			Vendor:     d.Vendor,
+			Model:      d.Model,
+			Firmware:   d.Firmware,
+			Serial:     d.Serial,
+			OTIDs:      strings.Join(d.SortedOTIdentifiers(), " · "),
 			Class:      string(d.Class),
 			Users:      strings.Join(d.SortedUsers(), ", "),
 			Protocols:  strings.Join(d.SortedProtocols(), " "),
@@ -200,6 +215,12 @@ func Build(source string, total, skipped int, devices []*identify.Device,
 		var id []string
 		if d.Vendor != "" {
 			id = append(id, d.Vendor)
+		}
+		// A model number a device stated about itself outranks anything
+		// inferred, so it belongs in the headline identity rather than buried
+		// in the detail: "1756-L71/B LOGIX5571" is the answer an engineer wants.
+		if d.Model != "" {
+			id = append(id, d.Model)
 		}
 		if d.OS != "" {
 			id = append(id, d.OS)

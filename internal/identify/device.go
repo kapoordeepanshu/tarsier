@@ -49,6 +49,12 @@ type Service struct {
 type Device struct {
 	IP  string
 	MAC string
+	// RandomMAC records that the observed address had the locally-administered
+	// bit set, i.e. the device generated it rather than inheriting it from its
+	// manufacturer. Worth surfacing rather than hiding: it means this entry
+	// cannot be correlated with the same device tomorrow, which is a real limit
+	// on the inventory rather than a detail of the parser.
+	RandomMAC bool
 
 	Hostnames map[string]bool // every name seen for it, from any source
 	Users     map[string]bool // usernames observed authenticating from it
@@ -58,6 +64,20 @@ type Device struct {
 	Class  Class
 	OS     string
 	Model  string
+
+	// Firmware and Serial are populated where a protocol states them outright.
+	// In practice that means industrial equipment: IEC 62443-3-2 asks for device
+	// type, vendor, model, firmware version and protocols in use, and an
+	// EtherNet/IP List Identity response hands over four of the five unprompted.
+	// Nothing on the IT side of a network is anywhere near this forthcoming.
+	Firmware string
+	Serial   string
+
+	// OTIdentifiers holds protocol-level station addresses — a DNP3 outstation
+	// number, a Modbus unit ID. On a control network these, not the IP address,
+	// are how engineers refer to a device, so an inventory that omits them is
+	// one the people who run the plant cannot cross-reference.
+	OTIdentifiers map[string]bool
 
 	JA3 map[string]bool // client TLS fingerprints
 	JA4 map[string]bool
@@ -115,20 +135,21 @@ type Cert struct {
 
 func newDevice(ip string) *Device {
 	return &Device{
-		IP:           ip,
-		Hostnames:    map[string]bool{},
-		Users:        map[string]bool{},
-		Services:     map[int]*Service{},
-		JA3:          map[string]bool{},
-		JA4:          map[string]bool{},
-		VLANs:        map[int]bool{},
-		Protocols:    map[string]bool{},
-		Shares:       map[string]bool{},
-		Activity:     map[int64]int{},
-		ExternalDsts: map[string]bool{},
-		weights:      map[string]float64{},
-		specificity:  map[string]int{},
-		seen:         map[string]bool{},
+		IP:            ip,
+		Hostnames:     map[string]bool{},
+		Users:         map[string]bool{},
+		OTIdentifiers: map[string]bool{},
+		Services:      map[int]*Service{},
+		JA3:           map[string]bool{},
+		JA4:           map[string]bool{},
+		VLANs:         map[int]bool{},
+		Protocols:     map[string]bool{},
+		Shares:        map[string]bool{},
+		Activity:      map[int64]int{},
+		ExternalDsts:  map[string]bool{},
+		weights:       map[string]float64{},
+		specificity:   map[string]int{},
+		seen:          map[string]bool{},
 	}
 }
 
@@ -282,6 +303,9 @@ func (d *Device) BestHostname() string {
 
 func (d *Device) SortedHostnames() []string { return sortedKeys(d.Hostnames) }
 func (d *Device) SortedUsers() []string     { return sortedKeys(d.Users) }
+
+// SortedOTIdentifiers lists protocol-level station addresses.
+func (d *Device) SortedOTIdentifiers() []string { return sortedKeys(d.OTIdentifiers) }
 
 // SortedServices lists observed listening ports, lowest first.
 func (d *Device) SortedServices() []*Service {

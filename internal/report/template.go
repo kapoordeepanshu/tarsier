@@ -417,7 +417,7 @@ footer a:hover{text-decoration:underline}
   {{range .Devices}}
   <details class="dev" data-a="{{.Buckets}}" data-cls="{{.Class}}" data-ev="{{.Events}}"
            data-proto="{{.Protocols}}" data-sev="{{.Severity}}"
-           data-s="{{.IP}} {{.Hostname}} {{.Identity}} {{.Class}} {{.Vendor}} {{.Users}}"
+           data-s="{{.IP}} {{.Hostname}} {{.Identity}} {{.Class}} {{.Vendor}} {{.Model}} {{.Firmware}} {{.Serial}} {{.OTIDs}} {{.Users}}"
            data-unk="{{if .Unknown}}1{{else}}0{{end}}"
            style="--c:var(--c-{{.Class}})">
     <summary>
@@ -453,7 +453,11 @@ footer a:hover{text-decoration:underline}
     <div class="ev">
       <dl class="facts">
         {{if .FirstSeen}}<div class="fact"><dt>seen</dt><dd>{{.FirstSeen}} → {{.LastSeen}}</dd></div>{{end}}
-        {{if .MAC}}<div class="fact"><dt>hardware</dt><dd>{{.MAC}}{{if .Vendor}} · {{.Vendor}}{{end}}</dd></div>{{end}}
+        {{if .MAC}}<div class="fact"><dt>hardware</dt><dd>{{.MAC}}{{if .RandomMAC}} <em>(randomised — not a stable identifier)</em>{{end}}{{if .Vendor}} · {{.Vendor}}{{end}}</dd></div>{{end}}
+        {{if .Model}}<div class="fact"><dt>model</dt><dd>{{.Model}}</dd></div>{{end}}
+        {{if .Firmware}}<div class="fact"><dt>firmware</dt><dd>{{.Firmware}}</dd></div>{{end}}
+        {{if .Serial}}<div class="fact"><dt>serial</dt><dd>{{.Serial}}</dd></div>{{end}}
+        {{if .OTIDs}}<div class="fact"><dt>control net</dt><dd>{{.OTIDs}}</dd></div>{{end}}
         {{if .Services}}<div class="fact"><dt>serving</dt><dd>{{.Services}}</dd></div>{{end}}
         {{if .Protocols}}<div class="fact"><dt>protocols</dt><dd>{{.Protocols}}</dd></div>{{end}}
         {{if .Users}}<div class="fact"><dt>users</dt><dd>{{.Users}}</dd></div>{{end}}

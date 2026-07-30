@@ -1,0 +1,49 @@
+# Listening ports.
+#
+# A port a device answers on is a statement about its role. Weights are modest
+# on their own because ports are reassignable; they are meant to combine with
+# other signals rather than to decide anything alone.
+#
+# format: port<TAB>conclusion<TAB>weight<TAB>note
+#
+# The note is shown to the user as the evidence for the conclusion, so write it
+# as a plain-language explanation rather than a protocol abbreviation.
+
+9100	class=printer	0.9	JetDirect raw printing
+515	class=printer	0.8	LPD printing
+631	class=printer	0.8	IPP printing
+554	class=camera	0.75	RTSP video stream
+8554	class=camera	0.6	RTSP video stream
+3389	os=Windows	0.7	Remote Desktop
+445	os=Windows	0.4	SMB file sharing
+139	os=Windows	0.3	NetBIOS
+88	class=server	0.7	Kerberos — likely a domain controller
+389	class=server	0.6	LDAP — likely a domain controller
+636	class=server	0.6	LDAPS
+53	class=server	0.5	DNS server
+25	class=server	0.6	SMTP mail server
+587	class=server	0.5	SMTP submission
+993	class=server	0.5	IMAPS
+3306	class=server	0.7	MySQL database
+5432	class=server	0.7	PostgreSQL database
+1433	class=server	0.7	SQL Server database
+27017	class=server	0.7	MongoDB database
+6379	class=server	0.7	Redis
+2049	class=nas	0.7	NFS share
+548	class=nas	0.7	AFP share
+161	class=network	0.5	SNMP agent
+23	class=network	0.4	Telnet — insecure management
+5060	class=phone	0.8	SIP telephony
+5061	class=phone	0.7	SIP over TLS
+1883	class=iot	0.6	MQTT broker
+8883	class=iot	0.6	MQTT over TLS
+502	class=plc	0.95	Modbus — industrial control
+20000	class=plc	0.9	DNP3 — industrial control
+44818	class=plc	0.95	EtherNet/IP — industrial control
+47808	class=iot	0.8	BACnet — building automation
+102	class=plc	0.95	S7comm — Siemens industrial control
+2404	class=plc	0.9	IEC 60870-5-104 — power system control
+789	class=plc	0.85	Red Lion / Crimson industrial
+1911	class=iot	0.85	Niagara Fox — building automation
+4840	class=plc	0.8	OPC UA — industrial control
+18245	class=plc	0.8	GE SRTP — industrial control

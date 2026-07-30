@@ -1,0 +1,16 @@
+# Suricata's own app_proto identification.
+#
+# Where Suricata has positively identified the protocol, trust it more than a
+# port number: it inspected the traffic rather than guessing from a port.
+#
+# format: app_proto<TAB>conclusion<TAB>weight
+
+modbus	class=plc	0.95
+dnp3	class=plc	0.95
+enip	class=plc	0.95
+rdp	os=Windows	0.8
+smb	os=Windows	0.4
+krb5	class=server	0.6
+sip	class=phone	0.8
+mqtt	class=iot	0.7
+snmp	class=network	0.5

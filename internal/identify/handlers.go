@@ -68,15 +68,26 @@ func (r *Resolver) applyMAC(d *Device, mac string) {
 		return
 	}
 	d.MAC = strings.ToLower(mac)
+
+	// A randomised MAC is not hardware. Phones and laptops rotate their address
+	// per network by default, so treating one as a manufacturer assignment both
+	// invents a vendor and, worse, counts one device as many over time.
+	if IsLocallyAdministered(mac) {
+		d.RandomMAC = true
+		return
+	}
+
 	vendor := lookupOUI(mac)
 	if vendor == "" {
 		return
 	}
-	d.Vendor = vendor
+	// Record this as evidence rather than assigning it, so the strongest signal
+	// wins instead of whichever arrived first. It matters more than it looks:
+	// the IEEE registry lists MikroTik's block under "Routerboard.com", and a
+	// device whose DHCP announced "MikroTik" outright should not be filed under
+	// the holding company's name just because the MAC was parsed earlier.
 	d.note("mac.oui", mac, "vendor="+vendor, 0.85)
-	if cls, ok := ouiClass[vendor]; ok {
-		d.note("mac.oui", mac, "class="+string(cls), 0.7)
-	}
+	applySubstringRules(d, "mac.oui", vendor, vendorClass)
 }
 
 // addDNS harvests names for local addresses from A-record answers, which is how
@@ -154,7 +165,7 @@ func (r *Resolver) addTLS(rec *eve.Record, srcIP, destIP string) {
 			d.JA3[h] = true
 		}
 		if h := rec.FirstStr("tls.ja4", "tls.ja4.hash"); h != "" {
-			d.JA4[h] = true
+			r.applyJA4(d, h)
 		}
 	}
 	if !isPrivate(destIP) {
@@ -188,8 +199,15 @@ func (r *Resolver) addQUIC(rec *eve.Record, srcIP, destIP string) {
 	if isPrivate(srcIP) {
 		d := r.device(srcIP)
 		d.Protocols["quic"] = true
-		if h := rec.FirstStr("quic.ja4", "quic.ja3.hash"); h != "" {
-			d.JA4[h] = true
+		// Keep the two fingerprint kinds apart. A JA3 hash stored in the JA4 set
+		// is not merely mislabelled — JA4's leading characters are structured,
+		// so a hash landing there would be decoded as a TLS configuration and
+		// reported as fact.
+		if h := rec.Str("quic.ja4"); h != "" {
+			r.applyJA4(d, h)
+		}
+		if h := rec.Str("quic.ja3.hash"); h != "" {
+			d.JA3[h] = true
 		}
 		if ua := rec.Str("quic.ua"); ua != "" {
 			applySubstringRules(d, "quic.ua", ua, userAgents)
@@ -521,11 +539,16 @@ func (r *Resolver) addIndustrial(rec *eve.Record, srcIP, destIP, proto string) {
 		d := r.device(destIP)
 		d.Protocols[proto] = true
 		d.noteSpec(proto, proto+" endpoint", "class=plc", 0.95, 2)
+		r.addOTIdentity(rec, d, proto)
 	}
 	if isPrivate(srcIP) {
 		d := r.device(srcIP)
 		d.Protocols[proto] = true
 		d.note(proto, proto+" client", "class=server", 0.3)
+		// A List Identity reply travels from the controller, so the identity
+		// block can appear on either endpoint depending on which side of the
+		// exchange this record captured.
+		r.addOTIdentity(rec, d, proto)
 	}
 	// Industrial protocols carry no authentication of their own. If one is
 	// reachable from outside the OT segment, that is worth saying out loud.

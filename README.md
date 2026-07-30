@@ -7,6 +7,10 @@ certificate and application on your network — discovered from traffic.
 
 **No agents. No scanning. No credentials. No firewall.** It reads the `eve.json` you already have.
 
+**Runs on the Suricata you already have. One binary. No server.** That sentence is as true for a
+home lab as it is for a hospital — this is described by how little it takes to deploy, not by how
+big you are.
+
 <sub>Open-source **Suricata dashboard** and **eve.json analyser** for **passive network discovery**,
 **network asset inventory** and **device fingerprinting** — a free, self-hosted **Suricata web UI**
 and **IDS visibility** tool that replaces an ELK stack. Runs on OPNsense, pfSense, Docker, bare metal
@@ -84,9 +88,27 @@ Open `survey.html` in any browser. That's 18 devices and 15 things wrong with th
 ./tarsier-scan -last 24h /var/log/suricata/           # every rotated log, last day
 ./tarsier-scan -since 2026-07-28 -until 2026-07-30 'eve.json.*'
 ./tarsier-scan -html survey.html /var/log/suricata/   # shareable report
+./tarsier-scan -json monday.json /var/log/suricata/   # machine-readable inventory
+./tarsier-scan -netbox ips.csv /var/log/suricata/     # NetBox ipam.ip_addresses import
 ```
 
 It accepts single files, globs, or a whole directory of rotated logs, and reads `.gz` directly.
+
+**What changed since last week?** Two snapshots and a diff — no server, no database:
+
+```bash
+go build ./cmd/tarsier-diff
+
+./tarsier-scan -json monday.json /var/log/suricata/
+./tarsier-scan -json friday.json /var/log/suricata/
+./tarsier-diff monday.json friday.json
+```
+
+It reports devices that appeared, devices that went quiet, and devices that changed — a new
+listening port, a new user, a new VLAN, a firmware version that moved. Findings are matched on kind
+rather than wording, so rewording a message does not present the whole network as newly broken.
+Exit status is 0 when nothing changed and 1 when something did, so it can run from cron and stay
+silent until it has something to say.
 
 **No Suricata at all?** The sensor image contains it, pre-configured:
 
@@ -209,7 +231,38 @@ mDNS/NBNS names · SSH banner · SNMP sysDescr · served-port profile
 Contribute a fingerprint from your network with one command. Public domain — usable by anyone,
 including our competitors. Every deployment makes identification better for everyone else.
 
-**⬜ Seeding now — target 500 entries at launch.**
+**Where it lives.** Everything above is plain text under [`internal/identify/data/`](internal/identify/data/),
+not Go source. That is deliberate: the person who knows exactly how a Zebra label printer announces
+itself on DHCP is very often not a Go programmer, and requiring a code change to record that fact is
+a guaranteed way never to hear from them. Editing a `.tsv` and opening a pull request is the whole
+contribution process.
+
+| File | What it holds | Size |
+|---|---|---|
+| `oui.tsv` | MAC prefix → vendor, from the public IEEE MA-L/MA-M/MA-S registries | 52,843 |
+| `oui_override.tsv` | Curated prefixes IEEE cannot express — QEMU, VirtualBox, Docker | hand-maintained |
+| `fingerprints.tsv` | DHCP vendor class, User-Agent, SSH and service banners, hostnames | hand-maintained |
+| `ports.tsv` | Listening port → role, including the ICS protocols | hand-maintained |
+| `ja4.tsv` | JA4 TLS fingerprint → device | **empty, by design** — see below |
+
+Regenerate the IEEE table with `go run ./tools/genoui -fetch`.
+
+**Provenance rule, and it is not optional.** Entries must come from your own observations, vendor
+documentation, or other public-domain sources. Do **not** copy rows out of Fingerbank: their data is
+ODbL, which is share-alike, and anything derived from it must also be ODbL — which would silently
+destroy the CC0 licence this database carries.
+
+**On JA4.** Tarsier decodes the first ten characters of every JA4 fingerprint it sees, because they
+are a documented structure rather than a hash: TLS version offered, whether the client sent a server
+name, and the negotiated protocol. That works on every TLS client on the network with no database at
+all, and it is how a device that speaks nothing but encrypted traffic still gets identified. A client
+still offering TLS 1.0 becomes a finding in its own right — distinct from a server that accepts it,
+because the offer happens before anything is negotiated.
+
+`ja4.tsv` is empty because a fingerprint cannot be derived from a specification; each row has to come
+from someone observing a device they can positively identify. A wrong row there is worse than a
+missing one. Only **JA4** itself is used — it is BSD-3-Clause. The JA4+ family (JA4S, JA4H, JA4X,
+JA4SSH) is under the FoxIO License 1.1 and is deliberately not implemented.
 
 ---
 
@@ -250,12 +303,18 @@ possible.
 
 ## Stack
 
-**Go** (server + agent, one static binary each) · **ClickHouse** (the only datastore) ·
-**React + TypeScript** (embedded in the binary).
+**What exists today is Go, and nothing else.** `tarsier-scan` and `tarsier-diff` are static binaries
+with no dependencies, no database and no runtime. The fingerprint database is embedded as plain text.
+That is the entire build:
 
 ```bash
-docker compose up -d     # 2 containers. That's the whole product.
+go build ./cmd/tarsier-scan ./cmd/tarsier-diff
 ```
+
+**Planned, and not yet built:** a server for history beyond the sensor's local logs, using
+**ClickHouse** as the only datastore and **React + TypeScript** embedded in the binary. It is
+described here because it is the intended shape, not because you can run it — see
+[What works, and what doesn't](#what-works-and-what-doesnt).
 
 Agent cross-compiles to `linux/amd64`, `linux/arm64`, `linux/arm` and **`freebsd/amd64`** — because
 OPNsense and pfSense are where most of the world's dormant Suricata installs live.
@@ -334,12 +393,18 @@ outputs:
 
 `tarsier-scan` reports which of these are missing when you run it, so you never have to guess.
 
-### The agent
+### The agent — designed, not yet built
 
-Tails `eve.json`, detects rotation by **inode** rather than filename, persists its read offset so a
-restart resumes exactly where it stopped, and spools to disk when the server is unreachable — with a
-hard size cap, so it can never fill your sensor's disk. It never blocks Suricata. It also accepts
-Suricata's `redis` and `unix_stream` EVE outputs if you'd rather not tail a file at all.
+This describes the intended behaviour of the agent, which does not exist in this repository yet.
+
+It will tail `eve.json`, detect rotation by **inode** rather than filename, persist its read offset
+so a restart resumes exactly where it stopped, and spool to disk when the server is unreachable —
+with a hard size cap, so it can never fill your sensor's disk. It will never block Suricata. It is
+also intended to accept Suricata's `redis` and `unix_stream` EVE outputs, for people who would
+rather not tail a file at all.
+
+**Until then**, `tarsier-scan -json` on a schedule plus `tarsier-diff` gives you change detection
+with no agent and no server at all.
 
 ---
 
@@ -352,6 +417,14 @@ ever bought.
 
 - Reads every event type Suricata emits, tolerantly — unknown fields and new event types never break it
 - Identifies devices from 12+ signals, each with a confidence score and the evidence behind it
+- 52,843 hardware vendors from the IEEE registry, with curated overrides for the virtualisation
+  prefixes IEEE cannot express
+- JA4 structural decoding — TLS version, SNI and ALPN for every encrypted client, no database needed
+- Randomised MACs recognised as such, rather than inflating the device count forever
+- **Change detection** — `tarsier-diff` reports what appeared, vanished or changed between two scans
+- **Machine-readable output** — versioned JSON, plus a NetBox `ipam.ip_addresses` CSV
+- OT/ICS identity: vendor, model, firmware and serial from EtherNet/IP, Modbus unit IDs, DNP3
+  station addresses — the fields IEC 62443-3-2 asks for, from a network where scanning is forbidden
 - Findings with a plain-language fix, and a command to copy where one exists
 - Self-contained HTML report with time filtering — no server, opens offline
 - Reads single files, globs, whole directories of rotated logs, and `.gz`
@@ -360,7 +433,8 @@ ever bought.
 **Next, roughly in order**
 
 - **Live monitoring** — follow `eve.json` as it is written, handling rotation
-- **Change detection** — "here is what is new since last week", which is the reason to keep it running
+- Segmentation policy: declare the zones you intended, get told where reality disagrees
+- The identity graph — user → devices → services, from the Kerberos, LDAP and SMB names already collected
 - A server, so history outlives the sensor's local logs
 - Growing the fingerprint database, which is what makes identification better for everyone
 

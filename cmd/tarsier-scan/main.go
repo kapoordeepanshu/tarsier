@@ -24,13 +24,32 @@ import (
 
 	"tarsier/internal/eve"
 	"tarsier/internal/identify"
+	"tarsier/internal/inventory"
 	"tarsier/internal/report"
 )
+
+// writeTo runs write against a path, or against stdout when the path is "-".
+func writeTo(path string, write func(io.Writer) error) error {
+	if path == "-" {
+		return write(os.Stdout)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := write(f); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
 
 func main() {
 	verbose := flag.Bool("v", false, "show the evidence behind each identification")
 	minConf := flag.Float64("min-confidence", 0, "hide devices below this confidence (0-1)")
 	htmlOut := flag.String("html", "", "write a self-contained HTML report to this path")
+	jsonOut := flag.String("json", "", "write the inventory as JSON to this path (- for stdout)")
+	netboxOut := flag.String("netbox", "", "write a NetBox ipam.ip_addresses CSV to this path (- for stdout)")
 	last := flag.String("last", "", "only the most recent period, e.g. 24h, 7d, 30m")
 	since := flag.String("since", "", "only events at or after this time (2026-07-30 or 2026-07-30T09:00)")
 	until := flag.String("until", "", "only events at or before this time")
@@ -78,6 +97,35 @@ func main() {
 
 	name := describeInputs(inputs)
 	devices := res.Devices()
+
+	// The machine-readable outputs come first, and either one suppresses the
+	// terminal report: both are routinely redirected to a file or piped, and
+	// mixing a decorated summary into that stream would corrupt it.
+	if *jsonOut != "" || *netboxOut != "" {
+		snap := inventory.Build(name, total, skipped, devices, res.Findings(),
+			res.First, res.Last, time.Now())
+
+		if *jsonOut != "" {
+			if err := writeTo(*jsonOut, func(w io.Writer) error {
+				return inventory.Write(w, snap)
+			}); err != nil {
+				fmt.Fprintln(os.Stderr, "tarsier-scan:", err)
+				os.Exit(1)
+			}
+		}
+		if *netboxOut != "" {
+			if err := writeTo(*netboxOut, func(w io.Writer) error {
+				return inventory.WriteNetBoxCSV(w, snap)
+			}); err != nil {
+				fmt.Fprintln(os.Stderr, "tarsier-scan:", err)
+				os.Exit(1)
+			}
+		}
+		// Progress goes to stderr so it survives a redirect of stdout without
+		// contaminating the file.
+		fmt.Fprintf(os.Stderr, "%d devices, %d findings\n", len(devices), len(res.Findings()))
+		return
+	}
 
 	// The HTML report is the shareable artefact: one file, no dependencies,
 	// opens offline. It is what gets handed to a client or an auditor.

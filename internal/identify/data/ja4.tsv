@@ -1,0 +1,44 @@
+# JA4 TLS client fingerprint -> device or application.
+#
+# THIS TABLE IS DELIBERATELY EMPTY. Read why before adding to it.
+#
+# A JA4 fingerprint is a hash of how a TLS client is configured — which ciphers
+# it offers, in which order, with which extensions. Two devices running the same
+# TLS library produce the same fingerprint, which makes it the strongest signal
+# available for a device that only ever speaks encrypted traffic and never
+# reveals itself through DHCP, HTTP or SNMP.
+#
+# It is empty because a fingerprint cannot be guessed or derived from a
+# specification. Each row has to come from someone observing a known device and
+# recording what it produced. A wrong row here is worse than a missing one: it
+# would confidently mislabel every device sharing that TLS stack.
+#
+# Note that Tarsier already draws conclusions from JA4 WITHOUT this table. The
+# first ten characters of a JA4 string are structured, documented, and readable
+# on their own — see ja4.go. That covers TLS version, whether the client sent a
+# server name, and the negotiated protocol, for every TLS client on the network,
+# with no database at all. This table only adds naming on top of that.
+#
+# TO CONTRIBUTE A ROW
+# Run a scan with -v against traffic from a device you can positively identify,
+# take the JA4 string from its evidence block, and open an issue. Say how you
+# know what the device is. That last part is the whole value.
+#
+# LICENSING, and please read this before pasting anything in:
+#   - JA4 itself (the TLS client fingerprint, "t13d...") is BSD-3-Clause. Safe.
+#   - JA4S, JA4H, JA4X, JA4L, JA4SSH and the other JA4+ methods are under the
+#     FoxIO License 1.1, which restricts commercial redistribution. Do not add
+#     them to this file and do not build features on them.
+#   - Do not bulk-import ja4db.com. It is someone else's dataset with its own
+#     terms; this file is CC0 and everything in it must be ours to give away.
+#
+# format: ja4<TAB>conclusion<TAB>weight<TAB>spec
+#
+# The match is a prefix, so a partial fingerprint matches any string starting
+# with it. Full fingerprints are strongly preferred — a short prefix such as
+# "t13d" describes half the internet and concludes nothing useful.
+#
+# Example of the intended shape, commented out because it is not a real
+# observation:
+#
+# t13d1516h2_8daaf6152771_02713d6af862	vendor=Example	0.8	1

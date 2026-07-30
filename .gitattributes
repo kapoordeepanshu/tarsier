@@ -14,6 +14,11 @@ Dockerfile  text eol=lf
 *.json text eol=lf
 *.svg  text eol=lf
 
+# The fingerprint database. Tab-separated and line-oriented, so it must stay LF:
+# these files are compared and contributed to across platforms, and a CRLF
+# rewrite would show every line of a 52,000-row table as changed.
+*.tsv  text eol=lf
+
 # Capture data is binary; never let git touch it.
 *.pcap   binary
 *.pcapng binary

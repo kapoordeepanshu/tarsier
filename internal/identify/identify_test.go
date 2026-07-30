@@ -96,8 +96,107 @@ func TestARPFindsStaticallyAddressedDevices(t *testing.T) {
 	if d.MAC != "00:80:77:3a:1c:44" {
 		t.Errorf("MAC = %q, want the address from the ARP record", d.MAC)
 	}
-	if d.Vendor != "Brother" {
-		t.Errorf("Vendor = %q, want Brother from the OUI", d.Vendor)
+	// The IEEE registry spells this block "Brother industries", so match the
+	// vendor family rather than an exact string: the registry's wording is not
+	// ours to control, and pinning it would break on every IEEE refresh.
+	if !strings.HasPrefix(strings.ToLower(d.Vendor), "brother") {
+		t.Errorf("Vendor = %q, want a Brother name from the OUI", d.Vendor)
+	}
+	// The point of resolving the vendor is what it lets us conclude.
+	if d.Class != ClassPrinter {
+		t.Errorf("Class = %q, want printer inferred from the Brother OUI", d.Class)
+	}
+}
+
+// TestOUIRegistryIsLoaded guards the data file itself. The hand-written table
+// this replaced had 14 vendors; a truncated or unparsed oui.tsv would silently
+// return the tool to that state, and nothing else in the suite would notice.
+func TestOUIRegistryIsLoaded(t *testing.T) {
+	for _, tc := range []struct{ mac, want string }{
+		{"00:1b:21:00:00:01", "Intel"},      // MA-L, 24-bit
+		{"00:0c:29:11:22:33", "VMware"},     // MA-L
+		{"b8:27:eb:11:22:33", "Raspberry"},  // MA-L
+		{"52:54:00:11:22:33", "QEMU"},       // curated: IEEE has no such assignment
+		{"08:00:27:11:22:33", "VirtualBox"}, // curated: beats "PCS Systemtechnik"
+	} {
+		if got := lookupOUI(tc.mac); !strings.Contains(got, tc.want) {
+			t.Errorf("lookupOUI(%s) = %q, want it to contain %q", tc.mac, got, tc.want)
+		}
+	}
+
+	if n := len(ouiIEEE); n < 40000 {
+		t.Errorf("OUI registry has %d entries, want the full IEEE set (~53k)", n)
+	}
+}
+
+// TestRandomisedMACsAreNotTreatedAsHardware covers the failure that quietly
+// ruins a long-running inventory: phones rotate their MAC per network, and a
+// locally-administered address counted as a manufacturer assignment invents
+// both a vendor and, over time, an unbounded number of devices.
+func TestRandomisedMACsAreNotTreatedAsHardware(t *testing.T) {
+	d := resolve(t,
+		`{"event_type":"dhcp","src_ip":"10.0.0.1","dest_ip":"10.0.0.2","proto":"UDP",`+
+			`"dhcp":{"assigned_ip":"10.0.9.9","client_mac":"9a:1b:21:3a:1c:44","hostname":"phone"}}`,
+	)["10.0.9.9"]
+
+	if d == nil {
+		t.Fatal("device not found")
+	}
+	if !d.RandomMAC {
+		t.Error("RandomMAC = false for a locally-administered address")
+	}
+	if d.Vendor != "" {
+		t.Errorf("Vendor = %q, want none: a randomised MAC names no manufacturer", d.Vendor)
+	}
+}
+
+// TestDataTablesAreLoaded fails loudly if a data file is missing, malformed or
+// renamed. Every one of these was Go source before; a parse failure now
+// degrades identification silently rather than failing to compile.
+func TestDataTablesAreLoaded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    int
+	}{
+		{"vendor_class", len(vendorClass)},
+		{"dhcp_vendor_class", len(dhcpVendorClass)},
+		{"dhcp_vendor_class_secondary", len(dhcpVendorClassSecondary)},
+		{"user_agent", len(userAgents)},
+		{"user_agent_class", len(userAgentClass)},
+		{"ssh_banner", len(sshBanners)},
+		{"server_banner", len(serverBanners)},
+		{"hostname_prefix", len(hostnamePrefixes)},
+		{"ports", len(portRules)},
+		{"app_proto", len(appProtoRules)},
+	} {
+		if tc.n == 0 {
+			t.Errorf("table %q is empty — data file missing or unparsed", tc.name)
+		}
+	}
+
+	// Every rule must state a usable conclusion and a weight in range. A zero
+	// weight is dead data; a weight above 1 breaks the noisy-OR combination.
+	all := map[string][]substringRule{
+		"vendor_class": vendorClass, "dhcp_vendor_class": dhcpVendorClass,
+		"dhcp_vendor_class_secondary": dhcpVendorClassSecondary,
+		"user_agent":                  userAgents, "user_agent_class": userAgentClass,
+		"ssh_banner": sshBanners, "server_banner": serverBanners,
+		"hostname_prefix": hostnamePrefixes, "ja4": ja4Fingerprints,
+	}
+	for name, rules := range all {
+		for _, r := range rules {
+			if r.Match == "" {
+				t.Errorf("%s: rule with empty match", name)
+			}
+			if r.Weight <= 0 || r.Weight > 1 {
+				t.Errorf("%s: %q has weight %v, want 0 < w <= 1", name, r.Match, r.Weight)
+			}
+			if !strings.HasPrefix(r.Conclusion, "os=") &&
+				!strings.HasPrefix(r.Conclusion, "class=") &&
+				!strings.HasPrefix(r.Conclusion, "vendor=") {
+				t.Errorf("%s: %q has unrecognised conclusion %q", name, r.Match, r.Conclusion)
+			}
+		}
 	}
 }
 

@@ -1,0 +1,27 @@
+# Curated MAC prefix overrides. Hand-maintained; wins over the IEEE table.
+#
+# Two things the IEEE registry cannot tell you, both of which matter more to an
+# operator than the registered company name:
+#
+#   1. Prefixes IEEE never assigned. QEMU/KVM's 52:54:00 and VirtualBox's
+#      host-only 0A:00:27 are locally administered — the registry has no row at
+#      all, so without this file they resolve to nothing.
+#   2. Prefixes where the registered owner is not the useful answer. 08:00:27 is
+#      registered to "PCS Systemtechnik", an Oracle subsidiary. Nobody looking at
+#      an inventory wants that; they want "VirtualBox".
+#
+# Prefixes are uppercase hex with no separators, any even length. Longest match
+# wins, and any entry here beats the IEEE table at any length.
+#
+# format: prefix<TAB>vendor
+
+# --- virtualisation: unregistered or unhelpfully registered ------------------
+525400	QEMU/KVM
+080027	VirtualBox
+0A0027	VirtualBox
+00155D	Microsoft Hyper-V
+001C42	Parallels
+0242	Docker
+00163E	Xen
+001A4A	Xen
+0003FF	Microsoft Hyper-V
