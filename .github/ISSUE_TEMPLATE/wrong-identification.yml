@@ -1,0 +1,57 @@
+name: Wrong identification
+description: Tarsier labelled a device incorrectly, or could not identify one you know
+labels: ["identification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful report you can send. A correct answer confirms nothing new; a wrong
+        one points straight at the rule that needs fixing.
+
+        **Please do not paste a raw `eve.json`.** It contains your internal addresses, MAC
+        addresses, hostnames, usernames and every domain your machines looked up. The evidence block
+        below is enough.
+
+  - type: input
+    id: said
+    attributes:
+      label: What Tarsier said
+      placeholder: "Brother · printer  (99% confident)"
+    validations:
+      required: true
+
+  - type: input
+    id: actual
+    attributes:
+      label: What it actually is
+      placeholder: "A Zebra label printer, not a Brother"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: "From `tarsier-scan -v` — the `why:` block for that device. Redact addresses if you prefer."
+      render: text
+      placeholder: |
+        why:
+            mac.oui    00:80:77:3a:1c:44    → vendor=Brother (0.85)
+            dhcp.hostname  BRN3A1C44        → vendor=Brother (0.60)
+    validations:
+      required: true
+
+  - type: input
+    id: suricata
+    attributes:
+      label: Suricata version
+      description: "Output of `suricata -V`"
+      placeholder: "This is Suricata version 8.0.6 RELEASE"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: "How you know what the device really is, or anything that would help identify it correctly."

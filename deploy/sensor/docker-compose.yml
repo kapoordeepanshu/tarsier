@@ -1,0 +1,80 @@
+# Tarsier sensor.
+#
+# For a company with no Suricata and no security tooling of any kind.
+# Requirements: a machine with Docker, and a network interface receiving
+# mirrored traffic from a switch. Nothing is installed on the host, and nothing
+# is placed in the path of production traffic.
+#
+#   1. Configure a mirror (SPAN) port on your switch
+#   2. Plug this machine into it
+#   3. docker compose up -d
+#
+# To see what it found without any server at all:
+#   docker compose exec sensor tarsier-scan /var/log/suricata/eve.json
+
+services:
+  sensor:
+    build:
+      context: ../..
+      dockerfile: deploy/sensor/Dockerfile
+    image: tarsier/sensor:latest
+    container_name: tarsier-sensor
+    restart: unless-stopped
+
+    # Host networking is required to see the real interfaces. The sensor only
+    # ever receives; it is not in the path of any traffic and cannot forward,
+    # block or modify anything.
+    network_mode: host
+
+    cap_add:
+      - NET_ADMIN   # promiscuous mode on the capture interface
+      - NET_RAW     # packet capture
+    # Everything else is dropped. A sensor holding a map of the network is a
+    # valuable target and should hold no privilege it does not use.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      # Leave empty to auto-detect the interface carrying traffic.
+      TARSIER_INTERFACE: "${TARSIER_INTERFACE:-}"
+
+      # How many days of rotated logs to keep locally. The agent ships events
+      # onward within seconds, so this is a replay buffer for outages, not an
+      # archive — a week is generous.
+      TARSIER_RETAIN_DAYS: "${TARSIER_RETAIN_DAYS:-7}"
+
+      # Hard ceiling on local log storage, in MB, and the backstop that wins
+      # over the retention period. A busy link can blow past this long before
+      # logs age out, and a full disk stops capture entirely.
+      TARSIER_MAX_LOG_MB: "${TARSIER_MAX_LOG_MB:-2048}"
+
+      # Threat detection rules are optional. A full inventory is produced with
+      # no ruleset at all, so a failed download never blocks startup.
+      TARSIER_ENABLE_RULES: "${TARSIER_ENABLE_RULES:-yes}"
+
+      # Leave both unset to run standalone with no server.
+      TARSIER_SERVER: "${TARSIER_SERVER:-}"
+      TARSIER_TOKEN: "${TARSIER_TOKEN:-}"
+
+    volumes:
+      - suricata-logs:/var/log/suricata
+      - suricata-rules:/var/lib/suricata/rules
+
+    # Bound resource use so the sensor is safe to run on a small mini-PC that is
+    # also doing something else.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  suricata-logs:
+  suricata-rules:

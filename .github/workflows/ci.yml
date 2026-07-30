@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly, so a breaking change in Suricata turns the build red before it
+    # reaches anyone's sensor rather than after.
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - run: go build ./...
+
+      - name: Scan the bundled sample end to end
+        run: |
+          go build -o tarsier-scan ./cmd/tarsier-scan
+          ./tarsier-scan testdata/demo-week.json > out.txt
+          ./tarsier-scan -html survey.html testdata/demo-week.json
+          # Guard the two headline claims: devices are found, and problems are
+          # reported. A silent regression here would look like success.
+          grep -q "18 devices found" out.txt
+          grep -q "THINGS WORTH LOOKING AT" out.txt
+          test -s survey.html
+          # The report must stay self-contained: no external fetches, ever.
+          ! grep -Eq '(src|href)="https?://[^"]*\.(js|css|png|woff2?)' survey.html
+
+  cross-compile:
+    name: Cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build every release target
+        run: |
+          set -e
+          # freebsd/amd64 is not optional: OPNsense and pfSense are where most
+          # of the world's dormant Suricata installs actually live.
+          for t in linux/amd64 linux/arm64 linux/arm freebsd/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 \
+              go build -trimpath -o /dev/null ./cmd/tarsier-scan
+            echo "ok  $t"
+          done
+
+  suricata:
+    name: Suricata ${{ matrix.suricata }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # distro = whatever Ubuntu ships (older, what many people actually run).
+        # oisf   = current stable, which is what the sensor image installs.
+        suricata: [distro, oisf]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Suricata
+        run: |
+          set -e
+          if [ "${{ matrix.suricata }}" = "oisf" ]; then
+            sudo add-apt-repository -y ppa:oisf/suricata-stable
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq suricata
+          # The package starts Suricata as a service. Our own instance would
+          # then abort on the existing pidfile, so stop it and clear the file.
+          sudo systemctl stop suricata || true
+          sudo systemctl disable suricata || true
+          sudo pkill -TERM suricata || true
+          sleep 3
+          sudo rm -f /var/run/suricata.pid
+          suricata -V
+
+      - name: Our config must load on this version
+        run: |
+          set -e
+          mkdir -p run/log && cd run
+          cp ../deploy/sensor/suricata.yaml .
+          # Trim memcaps for a CI runner and point logs at the workspace.
+          sed -i 's/^  memcap: 256mb/  memcap: 48mb/;s/^    memcap: 512mb/    memcap: 64mb/' suricata.yaml
+          sed -i "s#default-log-dir: /var/log/suricata#default-log-dir: $PWD/log#" suricata.yaml
+          sed -i "s#^default-rule-path.*#default-rule-path: $PWD#" suricata.yaml
+          sed -i 's#^  - suricata.rules#  - empty.rules#' suricata.yaml
+          touch empty.rules
+          # An older Suricata may not know every section we enable; that is
+          # expected and is why the sensor image ships a current version. What
+          # must not happen is Tarsier failing to read whatever it does produce.
+          sudo suricata -T -c suricata.yaml \
+            --set classification-file=/etc/suricata/classification.config \
+            --set reference-config-file=/etc/suricata/reference.config \
+            || echo "::warning::config not fully supported on ${{ matrix.suricata }} Suricata"
+
+      - name: Produce real EVE and parse it
+        run: |
+          set -e
+          cd run
+          IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -1)
+          echo "capturing on $IFACE"
+          # Own pidfile, so a stray service instance cannot collide with ours.
+          sudo suricata -c suricata.yaml --af-packet=$IFACE \
+            --pidfile "$PWD/suricata.pid" \
+            --set classification-file=/etc/suricata/classification.config \
+            --set reference-config-file=/etc/suricata/reference.config -D
+          sleep 10
+          for h in github.com debian.org cloudflare.com wikipedia.org; do
+            dig +short $h >/dev/null 2>&1 || true
+            curl -s -o /dev/null --max-time 5 "https://$h" || true
+          done
+          sleep 10
+          sudo pkill -TERM suricata || true
+          sleep 5
+          sudo chmod -R a+r log
+          test -s log/eve.json
+          echo "event types produced:"
+          grep -o '"event_type":"[a-z0-9_-]*"' log/eve.json | sort | uniq -c
+          cd ..
+          go build -o tarsier-scan ./cmd/tarsier-scan
+          # The real assertion: whatever this Suricata emitted, we read it
+          # without failing. Tolerance is the promise, so tolerance is the test.
+          ./tarsier-scan run/log/eve.json

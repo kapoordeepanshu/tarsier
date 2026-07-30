@@ -1,0 +1,333 @@
+%YAML 1.1
+---
+# Tarsier sensor — Suricata configuration
+#
+# This file is the most important thing in the sensor. A default Suricata install
+# logs alerts and almost nothing else, which is why most deployments throw away
+# the data Tarsier depends on. Everything below is enabled deliberately.
+#
+# It is also written to bound disk usage: the sensor rotates its own logs
+# frequently and keeps very few, because the agent ships events onward within
+# seconds and the local file is only a buffer. See docs/DISK.md.
+
+vars:
+  address-groups:
+    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+    EXTERNAL_NET: "!$HOME_NET"
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
+  port-groups:
+    HTTP_PORTS: "80,81,8000,8008,8080,8081,8088,8888"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    GENEVE_PORTS: 6081
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+
+default-log-dir: /var/log/suricata
+
+# ---------------------------------------------------------------------------
+# Capture
+# ---------------------------------------------------------------------------
+# Passive only. The sensor is never in the traffic path, so it cannot affect
+# the network it is watching even if it fails completely.
+af-packet:
+  - interface: ${TARSIER_INTERFACE}
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    tpacket-v3: yes
+    ring-size: 4096
+    block-size: 1048576
+    # Never let a busy sensor block or backpressure. Dropping is acceptable;
+    # interfering with the monitored network is not.
+    checksum-checks: no
+    threads: auto
+
+# ---------------------------------------------------------------------------
+# Application layer
+# ---------------------------------------------------------------------------
+# Every parser Suricata has is enabled. Each one is a source of device identity,
+# and parsers are cheap relative to the value of what they reveal.
+app-layer:
+  protocols:
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: "443,444,465,853,993,995,3389,5061,8443,9443"
+      # Fingerprinting: identifies the client software stack and survives
+      # encryption. Central to device identification.
+      ja3-fingerprints: yes
+      ja4-fingerprints: yes
+      encryption-handling: track-only
+    quic:
+      enabled: yes
+    http:
+      enabled: yes
+      libhtp:
+        default-config:
+          personality: IDS
+          request-body-limit: 16kb
+          response-body-limit: 16kb
+    http2:
+      enabled: yes
+    dns:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: "53,5353"
+    dhcp:
+      enabled: yes
+    arp:
+      # Suricata 8.0+. The only way to see statically-addressed devices —
+      # servers, printers, cameras and PLCs that never use DHCP.
+      enabled: yes
+    smb:
+      enabled: yes
+      detection-ports:
+        dp: "139,445"
+    nfs:
+      enabled: yes
+    krb5:
+      enabled: yes
+    ldap:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: "389,3268"
+      udp:
+        enabled: yes
+    dcerpc:
+      enabled: yes
+    ssh:
+      enabled: yes
+    rdp:
+      enabled: yes
+    snmp:
+      enabled: yes
+    smtp:
+      enabled: yes
+      mime:
+        decode-mime: yes
+    ftp:
+      enabled: yes
+    tftp:
+      enabled: yes
+    sip:
+      enabled: yes
+    rfb:
+      enabled: yes
+      detection-ports:
+        dp: "5900,5901,5902,5903,5904,5905,5906"
+    mqtt:
+      enabled: yes
+    websocket:
+      enabled: yes
+    pgsql:
+      enabled: yes
+    ike:
+      enabled: yes
+    bittorrent-dht:
+      enabled: yes
+    # Industrial control. Passive is the only lawful option in these
+    # environments, which is exactly why this matters.
+    modbus:
+      enabled: yes
+      detection-ports:
+        dp: 502
+      stream-depth: 0
+    dnp3:
+      enabled: yes
+      detection-ports:
+        dp: 20000
+    enip:
+      enabled: yes
+      detection-ports:
+        dp: 44818
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      # Suricata rotates its own log hourly. The agent ships events within
+      # seconds, so the local file is a short-lived buffer, not an archive.
+      # This is what keeps a small sensor from filling its disk.
+      rotate-interval: 1h
+      pcap-file: false
+      community-id: true
+      community-id-seed: 0
+      types:
+        - alert:
+            payload: no
+            payload-printable: yes
+            packet: no
+            metadata: yes
+            http-body: no
+            tagged-packets: no
+        - anomaly:
+            enabled: yes
+            types:
+              decode: yes
+              stream: yes
+              applayer: yes
+        - http:
+            extended: yes
+            custom: [Server, Location, Content-Type, Referer]
+        - http2
+        - dns:
+            enabled: yes
+        - tls:
+            extended: yes
+            # Fingerprints and certificate detail. Certificate expiry is a real
+            # outage nobody tracks, and this is where it comes from.
+            ja3: yes
+            ja4: yes
+            session-resumption: no
+        - quic
+        - dhcp:
+            enabled: yes
+            # Full DHCP options: vendor class, requested hostname, parameter
+            # list. The single best passive identification signal there is.
+            extended: yes
+        - arp
+        - smb
+        - nfs
+        - krb5
+        - ldap
+        - dcerpc
+        - ssh
+        - rdp
+        - snmp
+        - smtp
+        - ftp
+        - tftp
+        - sip
+        - rfb
+        - mqtt:
+            passwords: no
+        - websocket
+        - pgsql:
+            enabled: yes
+            passwords: no
+        - ike
+        - bittorrent-dht
+        - modbus
+        - dnp3
+        - enip
+        - files:
+            force-magic: no
+            force-hash: [sha256]
+        - flow
+        # Suricata's own counters. A sensor dropping packets is quietly
+        # producing an incomplete inventory, which is worse than one that is
+        # plainly offline — so this is reported, not hidden.
+        - stats:
+            totals: yes
+            threads: no
+            deltas: no
+
+  # Human-readable log for troubleshooting the sensor itself. Small and rotated.
+  - console:
+      enabled: no
+  - file-store:
+      version: 2
+      enabled: no
+  - stats:
+      enabled: yes
+      interval: 60
+
+logging:
+  default-log-level: notice
+  outputs:
+    - console:
+        enabled: yes
+    - file:
+        enabled: yes
+        level: info
+        filename: suricata.log
+
+# ---------------------------------------------------------------------------
+# Engine
+# ---------------------------------------------------------------------------
+# Tuned toward metadata completeness over deep payload inspection, because the
+# metadata is what this product is built on.
+flow:
+  memcap: 256mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+flow-timeouts:
+  default:
+    new: 30
+    established: 300
+    closed: 0
+    bypassed: 100
+  tcp:
+    new: 60
+    established: 600
+    closed: 60
+  udp:
+    new: 30
+    established: 300
+
+stream:
+  memcap: 256mb
+  checksum-validation: no
+  inline: no
+  reassembly:
+    memcap: 512mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+
+defrag:
+  memcap: 64mb
+  hash-size: 65536
+  trackers: 65535
+  max-frags: 65535
+  prealloc: yes
+  timeout: 60
+
+host:
+  hash-size: 4096
+  prealloc: 1000
+  memcap: 32mb
+
+# Rules are optional. Tarsier's value does not depend on them, so a sensor
+# with no ruleset still produces a complete inventory. suricata-update populates
+# this directory when threat detection is wanted as well.
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - suricata.rules
+
+classification-file: /etc/suricata/classification.config
+reference-config-file: /etc/suricata/reference.config
+threshold-file: /etc/suricata/threshold.config
+
+unix-command:
+  enabled: yes
+  filename: /var/run/suricata/suricata-command.socket
