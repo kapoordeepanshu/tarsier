@@ -1,0 +1,63 @@
+# Compiled binaries — these are release artefacts, not source.
+# Leading slash matters: a bare "tarsier-scan" would also match the source
+# directory cmd/tarsier-scan/ and silently exclude the entire CLI.
+/tarsier-scan
+/tarsier-scan.exe
+/tarsier-agent
+/tarsier-agent.exe
+/tarsier
+/tarsier.exe
+/dist/
+/build/
+
+# Generated reports. Never commit one from a real network: it is a complete map
+# of somebody's infrastructure, including hostnames, usernames and internal
+# addresses. Screenshots for the README go in docs/img/ and use demo data only.
+*.html
+!docs/**/*.html
+
+# Real capture data. testdata/demo-week.json is synthetic and intentionally
+# committed; anything else here is somebody's actual traffic and must never be.
+# A captured eve.json contains internal addresses, MAC addresses, hostnames and
+# the names every machine looked up — publishing one is a data leak.
+eve.json
+eve.json.*
+*.pcap
+*.pcapng
+/testdata/private/
+/testdata/real/
+
+# Credentials. Broad on purpose: a private key in a public repo is the single
+# worst mistake this project could make, and "git add -A" is one keystroke away
+# from making it. Anything that looks like a secret stays out.
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.crt
+.env
+.env.*
+*secret*
+*credential*
+/docs/*.sh
+
+# Strategy, business and go-to-market notes stay private. Images are published,
+# because the README depends on them.
+/docs/*.md
+
+# Go
+*.test
+*.out
+coverage.*
+vendor/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
