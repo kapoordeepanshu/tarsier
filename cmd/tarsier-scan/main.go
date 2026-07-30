@@ -208,11 +208,19 @@ examples:
   tarsier-scan -last 24h /var/log/suricata/          # every rotated log, last day
   tarsier-scan -since 2026-07-28 -until 2026-07-30 'eve.json.*'
   tarsier-scan -html survey.html /var/log/suricata/  # shareable report
+  tarsier-scan -json monday.json /var/log/suricata/  # machine-readable inventory
+
+what changed since last week:
+  tarsier-scan -json monday.json /var/log/suricata/
+  tarsier-scan -json friday.json /var/log/suricata/
+  tarsier-diff monday.json friday.json
 
 flags:
   -v                    show the evidence behind each identification
   -min-confidence 0.5   hide devices identified with low confidence
   -html FILE            write a self-contained HTML report
+  -json FILE            write the inventory as JSON ("-" for stdout)
+  -netbox FILE          write a NetBox ipam.ip_addresses CSV ("-" for stdout)
   -last 24h             only the most recent period (24h, 7d, 30m)
   -since 2026-07-28     only events at or after this time
   -until 2026-07-30     only events at or before this time
