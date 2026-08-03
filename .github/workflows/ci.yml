@@ -82,6 +82,56 @@ jobs:
           assert len(rows)==19, len(rows)
           assert all('/' in r[0] for r in rows[1:])"
 
+      - name: Follow a live log across a rotation
+        run: |
+          set -e
+          go build -o tarsier-watch ./cmd/tarsier-watch
+          mkdir -p live
+
+          # Everything except one device, so there is a genuinely new arrival
+          # later rather than only a change to something already known.
+          grep -v '10.0.20.9' testdata/demo-week.json | head -300 > live/eve.json
+
+          ./tarsier-watch -json live/inv.json -every 1s -poll 500ms \
+            -notify 3s -changes live/changes.jsonl \
+            -on-change 'cat > live/hook.txt' live/eve.json > live/out.log 2>&1 &
+          watch_pid=$!
+          sleep 2
+
+          # Written before the rename and therefore present only in the rotated
+          # file. A follower watching the path rather than its own handle drops
+          # exactly these lines, and the device count below is what catches it.
+          grep '10.0.20.9' testdata/demo-week.json | head -40 >> live/eve.json
+          mv live/eve.json live/eve.json.1
+          sed -n '301,600p' testdata/demo-week.json > live/eve.json
+          sleep 6
+
+          kill "$watch_pid" 2>/dev/null || true
+          sleep 1
+          cat live/out.log
+
+          # The new device has to have survived the rotation.
+          python3 -c "
+          import json
+          d=json.load(open('live/inv.json'))
+          ips={x['ip'] for x in d['devices']}
+          assert '10.0.20.9' in ips, 'device written just before rotation was lost'
+          print(len(ips),'devices after rotation')"
+
+          # It has to have said so, too.
+          test -s live/hook.txt || { echo 'no change report was delivered'; exit 1; }
+          grep -q '10.0.20.9' live/hook.txt
+
+          # Every list present even when empty, so jq does not error on a quiet
+          # night. This is the contract anything tailing the file depends on.
+          python3 -c "
+          import json
+          for line in open('live/changes.jsonl'):
+              d=json.loads(line)
+              for k in ('appeared','disappeared','changed','new_findings','fixed_findings'):
+                  assert isinstance(d[k], list), (k, d[k])
+          print('change log is well formed')"
+
   cross-compile:
     name: Cross-compile
     runs-on: ubuntu-latest
@@ -100,6 +150,12 @@ jobs:
               go build -trimpath -o /dev/null ./cmd/tarsier-scan
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 \
               go build -trimpath -o /dev/null ./cmd/tarsier-diff
+            # tarsier-watch is the one with per-platform source: opening the log
+            # so that rotation still works, and running the -on-change hook, are
+            # done differently on Windows. That is exactly the code a
+            # single-platform build would never exercise.
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 \
+              go build -trimpath -o /dev/null ./cmd/tarsier-watch
             echo "ok  $t"
           done
 
