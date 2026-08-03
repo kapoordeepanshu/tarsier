@@ -1,0 +1,93 @@
+# Publishing a release is pushing a tag. Nothing is built by hand.
+#
+# The previous release went out with only one of the three binaries in it, which
+# is what happens when the build lives in somebody's shell history: the release
+# quietly stops matching what the README tells people to download. Every target
+# is built from one loop here, so a tool cannot be left out by forgetting it.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Buildable on demand too, so the matrix can be exercised without cutting a
+  # release to find out whether it works.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # A release that fails its own tests is worse than a late one.
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+
+      - name: Build every binary for every target
+        run: |
+          set -eu
+          mkdir -p dist
+
+          # Target list and the names people actually recognise. freebsd/amd64
+          # is not optional: OPNsense and pfSense are where most of the world's
+          # dormant Suricata installs live.
+          targets="
+          linux/amd64//linux-amd64
+          linux/arm64//linux-arm64
+          linux/arm/7/linux-armv7
+          freebsd/amd64//freebsd-amd64
+          darwin/amd64//macos-intel
+          darwin/arm64//macos-apple-silicon
+          windows/amd64//windows-amd64.exe
+          "
+
+          for t in $targets; do
+            goos=${t%%/*}
+            rest=${t#*/}
+            goarch=${rest%%/*}
+            rest=${rest#*/}
+            goarm=${rest%%/*}
+            suffix=${rest#*/}
+
+            for tool in tarsier-scan tarsier-watch tarsier-diff; do
+              out="dist/${tool}-${suffix}"
+              GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" CGO_ENABLED=0 \
+                go build -trimpath -ldflags "-s -w" -o "$out" "./cmd/${tool}"
+            done
+            echo "built $suffix"
+          done
+
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+
+      # Catch a partial build before it reaches anyone: three tools across seven
+      # targets, plus the checksum file.
+      - name: Check the set is complete
+        run: |
+          count=$(ls -1 dist | grep -vc SHA256SUMS.txt)
+          echo "$count binaries"
+          test "$count" -eq 21 || { echo "expected 21 binaries, found $count"; exit 1; }
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "Tarsier ${GITHUB_REF_NAME}" \
+            --generate-notes
+
+      - name: Keep the artefacts when there is no tag to publish to
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/
