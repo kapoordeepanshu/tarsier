@@ -133,7 +133,7 @@ jobs:
 
           ./tarsier-watch -json live/inv.json -every 1s -poll 500ms \
             -notify 3s -changes live/changes.jsonl \
-            -on-change 'cat > live/hook.txt' live/eve.json > live/out.log 2>&1 &
+            -on-change 'cat >> live/hook.txt' live/eve.json > live/out.log 2>&1 &
           watch_pid=$!
           sleep 2
 
@@ -157,9 +157,12 @@ jobs:
           assert '10.0.20.9' in ips, 'device written just before rotation was lost'
           print(len(ips),'devices after rotation')"
 
-          # It has to have said so, too.
+          # It has to have said so, too. Reports accumulate rather than
+          # overwrite: more than one interval can elapse here, and a later
+          # quieter report must not erase the one that named the new device.
           test -s live/hook.txt || { echo 'no change report was delivered'; exit 1; }
-          grep -q '10.0.20.9' live/hook.txt
+          grep -q '10.0.20.9' live/hook.txt || {
+            echo 'no report mentioned the device that appeared'; cat live/hook.txt; exit 1; }
 
           # Every list present even when empty, so jq does not error on a quiet
           # night. This is the contract anything tailing the file depends on.
