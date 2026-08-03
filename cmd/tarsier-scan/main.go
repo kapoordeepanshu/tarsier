@@ -219,6 +219,7 @@ examples:
   tarsier-scan -since 2026-07-28 -until 2026-07-30 'eve.json.*'
   tarsier-scan -html survey.html /var/log/suricata/  # shareable report
   tarsier-scan -json monday.json /var/log/suricata/  # machine-readable inventory
+  tarsier-scan -zones zones.conf /var/log/suricata/  # check your segmentation
 
 what changed since last week:
   tarsier-scan -json monday.json /var/log/suricata/
@@ -234,6 +235,7 @@ flags:
   -last 24h             only the most recent period (24h, 7d, 30m)
   -since 2026-07-28     only events at or after this time
   -until 2026-07-30     only events at or before this time
+  -zones FILE           check traffic against a segmentation policy
 
 Suricata must be logging more than alerts. In suricata.yaml:
 

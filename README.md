@@ -19,6 +19,12 @@ mirrors.</sub>
 > leave `tarsier-watch` following the live log to keep one current. Both are real and you can run
 > them in two minutes.
 >
+> Between them: the device inventory with its evidence, findings with fixes,
+> [segmentation checking](#check-your-segmentation) against a policy you declare,
+> [who signs in where](#who-signs-in-where), change detection that
+> [reaches out to you](#being-told-instead-of-remembering-to-look), and a rolling window that
+> [survives restarts](#keep-it-running).
+>
 > **Not yet built:** a server, a web UI, and a remote agent. Those are described under
 > [Where this is going](#where-this-is-going), in future tense, with no commands — because none of
 > them exist yet and pretending otherwise would waste your afternoon.
@@ -159,8 +165,8 @@ reading `.gz` files directly. You never pick files by hand. Read order doesn't m
 where a device reports something that changes over time, like a firmware version, the newest
 observation wins regardless of which file was parsed first.
 
-Flags: `-v`, `-min-confidence 0.5`, `-html`, `-json`, `-netbox`, `-last`, `-since`, `-until`. Run
-`tarsier-scan -h` for the full list.
+Flags: `-v`, `-min-confidence 0.5`, `-html`, `-json`, `-netbox`, `-last`, `-since`, `-until`,
+`-zones`. Run `tarsier-scan -h` for the full list.
 
 ### What changed since last week
 
@@ -592,8 +598,13 @@ JA4SSH) is under the FoxIO License 1.1 and is deliberately not implemented.
 No dates. A roadmap with dates on it is a promise, and missing one costs more trust than making it
 ever bought. Nothing below exists yet — there are no commands here because there is nothing to run.
 
-**A server**, eventually, so history outlives one sensor's local logs. It is last on purpose: the
-first four need no server, and adding one turns a five-minute deployment into a project.
+**A remote agent and a server**, so one place can hold the history of several sensors. This is last
+on purpose and may never be needed: everything above works on the sensor itself, and adding a server
+turns a five-minute deployment into a change-control project. It gets built when someone running this
+on a real network says they need it, not before.
+
+**A real web interface**, if the served report stops being enough. Today's report is a generated page
+and deliberately not an application — see [A shared dashboard](#a-shared-dashboard-without-a-server-to-run).
 
 **Deliberately not doing yet** — multi-tenancy, SSO, compliance packs. They matter to some people,
 but not before the basics are proven on real networks.
