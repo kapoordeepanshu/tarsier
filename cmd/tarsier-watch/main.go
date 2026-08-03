@@ -16,6 +16,8 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -44,6 +46,10 @@ func main() {
 		retain  = flag.String("retain", "30d", "forget devices silent for longer than this (0 to keep everything)")
 		catchup = flag.Bool("catchup", true, "replay the rotated logs beside the live file on start")
 		quiet   = flag.Bool("q", false, "only report problems")
+
+		notify   = flag.Duration("notify", time.Hour, "how often to report what changed (0 to disable)")
+		changes  = flag.String("changes", "", "append each change report to this file as JSON")
+		onChange = flag.String("on-change", "", "run this command when something changes, report on stdin")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -69,12 +75,15 @@ func main() {
 	}
 
 	w := &watcher{
-		path:      path,
-		res:       identify.NewResolver(),
-		htmlOut:   *htmlOut,
-		jsonOut:   *jsonOut,
-		retention: retention,
-		quiet:     *quiet,
+		path:        path,
+		res:         identify.NewResolver(),
+		htmlOut:     *htmlOut,
+		jsonOut:     *jsonOut,
+		retention:   retention,
+		quiet:       *quiet,
+		notifyEvery: *notify,
+		changesOut:  *changes,
+		onChange:    *onChange,
 	}
 
 	if *catchup {
@@ -90,6 +99,14 @@ type watcher struct {
 	htmlOut, jsonOut string
 	retention        time.Duration
 	quiet            bool
+
+	// Change reporting. baseline is the inventory as it stood at the last
+	// report, so each one answers "what changed since I last told you" rather
+	// than "what changed since the process started".
+	notifyEvery time.Duration
+	changesOut  string
+	onChange    string
+	baseline    inventory.Snapshot
 
 	events  int
 	skipped int
@@ -151,6 +168,17 @@ func (w *watcher) run(poll, every time.Duration) {
 	}
 	w.refresh()
 
+	// The first report compares against the network as we found it, not against
+	// nothing — otherwise every device on site would be announced as new.
+	w.baseline = w.snapshot()
+
+	var notifyTick <-chan time.Time
+	if w.notifyEvery > 0 {
+		t := time.NewTicker(w.notifyEvery)
+		defer t.Stop()
+		notifyTick = t.C
+	}
+
 	rotations, truncations := 0, 0
 	for {
 		select {
@@ -184,6 +212,9 @@ func (w *watcher) run(poll, every time.Duration) {
 			}
 			w.refresh()
 			w.dirty = false
+
+		case <-notifyTick:
+			w.report()
 		}
 	}
 }
@@ -237,6 +268,120 @@ func (w *watcher) refresh() {
 		len(devices), plural(len(devices), "device", "devices"),
 		len(findings), plural(len(findings), "finding", "findings"),
 		comma(w.events)))
+}
+
+func (w *watcher) snapshot() inventory.Snapshot {
+	return inventory.Build(w.path, w.events, w.skipped, w.res.Devices(), w.res.Findings(),
+		w.res.First, w.res.Last, time.Now())
+}
+
+// report says what changed since the last time it said anything.
+//
+// Silence when nothing changed is the point. A notification that arrives every
+// hour regardless teaches people to filter it, and then the one that mattered
+// gets filtered too.
+//
+// One honest limit: a device is only reported as no longer seen once retention
+// forgets it, which at the default is thirty days. Devices go quiet for a night
+// all the time, and reporting that hourly would be noise pretending to be
+// signal.
+func (w *watcher) report() {
+	current := w.snapshot()
+	d := inventory.Compare(w.baseline, current)
+	if d.Empty() {
+		w.baseline = current
+		return
+	}
+
+	var body strings.Builder
+	if err := inventory.WriteText(&body, w.baseline, current, d); err != nil {
+		warn("rendering changes: " + err.Error())
+		return
+	}
+
+	w.say(summarise(d))
+	if w.changesOut != "" {
+		w.appendChanges(d)
+	}
+	if w.onChange != "" {
+		w.runHook(body.String(), d)
+	}
+	// Only advance once it has been reported. If a hook fails the change is
+	// still news next time round rather than silently spent.
+	w.baseline = current
+}
+
+func summarise(d inventory.Diff) string {
+	var parts []string
+	if n := len(d.Appeared); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d new", n))
+	}
+	if n := len(d.Changed); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d changed", n))
+	}
+	if n := len(d.Disappeared); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d gone", n))
+	}
+	if n := len(d.NewFindings); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d new %s", n, plural(n, "finding", "findings")))
+	}
+	if n := len(d.FixedFindings); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d resolved", n))
+	}
+	return "changed: " + strings.Join(parts, ", ")
+}
+
+// appendChanges writes one JSON object per report, which is the shape anything
+// that tails a file already expects.
+func (w *watcher) appendChanges(d inventory.Diff) {
+	f, err := os.OpenFile(w.changesOut, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		warn("opening " + w.changesOut + ": " + err.Error())
+		return
+	}
+	defer f.Close()
+
+	rec := struct {
+		At     time.Time `json:"at"`
+		Source string    `json:"source"`
+		inventory.Diff
+	}{time.Now().UTC(), w.path, d}
+
+	if err := json.NewEncoder(f).Encode(rec); err != nil {
+		warn("writing " + w.changesOut + ": " + err.Error())
+	}
+}
+
+// runHook hands the report to whatever the operator wants to do with it. We
+// deliberately do not speak SMTP, Slack or webhooks: that would mean holding
+// credentials for a network we are only supposed to be watching, and every site
+// already has a way to send a message.
+//
+// It runs through the shell, because that is what anyone typing -on-change
+// expects, and with a timeout, because a hung mail command must not stall the
+// watcher indefinitely.
+func (w *watcher) runHook(body string, d inventory.Diff) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := hookCommand(ctx, w.onChange)
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	// Counts in the environment, so a script can decide whether to page someone
+	// without parsing the text we just handed it.
+	cmd.Env = append(os.Environ(),
+		"TARSIER_NEW="+strconv.Itoa(len(d.Appeared)),
+		"TARSIER_CHANGED="+strconv.Itoa(len(d.Changed)),
+		"TARSIER_GONE="+strconv.Itoa(len(d.Disappeared)),
+		"TARSIER_NEW_FINDINGS="+strconv.Itoa(len(d.NewFindings)),
+		"TARSIER_TOTAL="+strconv.Itoa(d.Total()),
+		"TARSIER_SOURCE="+w.path,
+	)
+
+	if err := cmd.Run(); err != nil {
+		warn("-on-change command failed: " + err.Error())
+	}
 }
 
 func (w *watcher) outputs() []string {
@@ -388,7 +533,11 @@ usage:
 examples:
   tarsier-watch -html /var/www/survey.html /var/log/suricata/eve.json
   tarsier-watch -html survey.html -json inventory.json -every 5m /var/log/suricata/eve.json
-  tarsier-watch -retain 7d -q /var/log/suricata/eve.json -json inventory.json
+  tarsier-watch -retain 7d -q -json inventory.json /var/log/suricata/eve.json
+
+  # mail a change report, but only when there is one
+  tarsier-watch -html survey.html -notify 1h \
+    -on-change 'mail -s "network changed" you@example.com' /var/log/suricata/eve.json
 
 flags:
   -html FILE      rewrite this HTML report as events arrive
@@ -397,7 +546,20 @@ flags:
   -poll 2s        how often to check the log for new data
   -retain 30d     forget devices silent for longer than this (0 keeps everything)
   -catchup        replay the rotated logs beside the live file on start (default true)
+  -notify 1h      how often to report what changed (0 disables)
+  -changes FILE   append each change report to this file, one JSON object per line
+  -on-change CMD  run this when something changes, with the report on stdin
   -q              only report problems
+
+Change reports are silent when nothing changed. The command given to -on-change
+runs through the shell with the readable report on stdin and the counts in the
+environment — TARSIER_NEW, TARSIER_CHANGED, TARSIER_GONE, TARSIER_NEW_FINDINGS,
+TARSIER_TOTAL and TARSIER_SOURCE — so a script can decide whether to wake
+somebody without parsing anything.
+
+Nothing here speaks SMTP, Slack or webhooks on your behalf. Holding credentials
+for a network we are only meant to be watching is not a trade worth making, and
+your site already has a way to send a message.
 
 It follows the live file across rotation, both by rename and by copy-truncate,
 and holds a partial last line until the writer finishes it. Nothing is written

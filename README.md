@@ -19,8 +19,7 @@ mirrors.</sub>
 > leave `tarsier-watch` following the live log to keep one current. Both are real and you can run
 > them in two minutes.
 >
-> **Not yet built:** a server, a web UI, a remote agent, and notifications that reach out to you
-> instead of waiting to be read. Those are described under
+> **Not yet built:** a server, a web UI, and a remote agent. Those are described under
 > [Where this is going](#where-this-is-going), in future tense, with no commands — because none of
 > them exist yet and pretending otherwise would waste your afternoon.
 >
@@ -236,6 +235,50 @@ WantedBy=multi-user.target
 `tarsier-watch -h` for the full set of flags. It writes through a temporary file and renames into
 place, so a browser reloading the report never catches it half-written.
 
+### Being told, instead of remembering to look
+
+The watcher already knows what changed. `-on-change` runs a command when something does — hourly by
+default, and **silent when nothing did**:
+
+```bash
+tarsier-watch -html /var/www/survey.html \
+  -on-change 'mail -s "network changed" you@example.com' \
+  /var/log/suricata/eve.json
+```
+
+```
+14:58:02  changed: 1 new, 1 changed
+
+  3 Aug 2026 14:02 → 3 Aug 2026 14:58
+  17 devices → 18 devices
+
+  1 NEW
+
+    + 10.0.20.9       plc-line-2
+      10.0.20.9  00:1d:9c:aa:31:07  Rockwell Automation  ports 502
+```
+
+The report arrives on the command's stdin, and the counts arrive in its environment —
+`TARSIER_NEW`, `TARSIER_CHANGED`, `TARSIER_GONE`, `TARSIER_NEW_FINDINGS`, `TARSIER_TOTAL`,
+`TARSIER_SOURCE` — so a script can decide whether to wake somebody without parsing anything:
+
+```bash
+-on-change 'if [ "$TARSIER_NEW_FINDINGS" -gt 0 ]; then page-oncall; else cat >> /var/log/tarsier-changes.txt; fi'
+```
+
+`-changes FILE` appends one JSON object per report, which is the shape anything that tails a file
+already expects. Every list is present even when empty, so `jq '.appeared | length'` works on a quiet
+night instead of erroring on `null`.
+
+**Nothing here speaks SMTP, Slack or webhooks on your behalf.** Holding credentials for a network we
+are only meant to be watching is not a trade worth making, and your site already has a way to send a
+message. Silence when nothing changed is the point: a notification that arrives every hour regardless
+teaches people to filter it, and then the one that mattered gets filtered too.
+
+**One honest limit.** A device is only reported as *no longer seen* once retention forgets it, which
+at the default is thirty days. Devices go quiet for a night constantly, and reporting that hourly
+would be noise wearing the costume of signal.
+
 ---
 
 ## Configure Suricata
@@ -444,10 +487,6 @@ JA4SSH) is under the FoxIO License 1.1 and is deliberately not implemented.
 
 No dates. A roadmap with dates on it is a promise, and missing one costs more trust than making it
 ever bought. Nothing below exists yet — there are no commands here because there is nothing to run.
-
-**Change notification**, so a new device or an expiring certificate reaches you instead of waiting to
-be found. Today that means `tarsier-diff` on a schedule; it should be the watcher noticing and
-telling you.
 
 **The rolling window on disk.** `tarsier-watch` already keeps one in memory and rebuilds it from
 your rotated logs on restart, which is enough for thirty days on any sensor that retains that much.

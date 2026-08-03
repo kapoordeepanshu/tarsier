@@ -61,7 +61,16 @@ func (d Diff) Total() int {
 
 // Compare diffs two snapshots, oldest first.
 func Compare(before, after Snapshot) Diff {
-	var d Diff
+	// Empty rather than nil, so every list serialises as [] and not null. A
+	// consumer asking jq for `.appeared | length` should get 0, not an error,
+	// on the ordinary night when nothing happened.
+	d := Diff{
+		Appeared:      []Change{},
+		Disappeared:   []Change{},
+		Changed:       []Change{},
+		NewFindings:   []Finding{},
+		FixedFindings: []Finding{},
+	}
 
 	oldByKey := map[string]Device{}
 	for _, dev := range before.Devices {
@@ -198,7 +207,7 @@ func findingsMissingFrom(a, b []Finding) []Finding {
 	for _, f := range b {
 		have[f.Device+"\x00"+f.Kind] = true
 	}
-	var out []Finding
+	out := []Finding{}
 	for _, f := range a {
 		if !have[f.Device+"\x00"+f.Kind] {
 			out = append(out, f)
