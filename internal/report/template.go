@@ -108,6 +108,11 @@ h1 .of{color:var(--sound)}
 .chip[aria-pressed="true"],.chip[aria-expanded="true"]{background:var(--sound);color:#fff;
       box-shadow:0 1px 3px rgba(47,107,255,.35)}
 .chip:focus-visible{outline:2px solid var(--sound);outline-offset:2px}
+/* A preset longer than the capture is shown rather than removed: the row of
+   ranges stays the same shape on every report, so the control does not appear
+   to gain and lose buttons depending on how much data was scanned. */
+.chip[disabled]{opacity:.34;cursor:default}
+.chip[disabled]:hover{background:transparent;color:var(--dim)}
 
 .plot{position:relative;height:78px;padding:.3rem .95rem .4rem;cursor:crosshair;
       user-select:none;touch-action:none}
@@ -173,6 +178,14 @@ h1 .of{color:var(--sound)}
 .copy:focus-visible{outline:2px solid var(--sound);outline-offset:1px}
 .find .rep{font-size:.72rem;color:var(--faint);margin-top:.28rem}
 .clear{padding:2.5rem 1rem;text-align:center;color:var(--dim);font-size:.88rem}
+/* Findings the window is holding back are announced rather than dropped. A
+   time filter that quietly removes a critical problem is worse than no filter,
+   so the count stays visible and the way to see them is one click. */
+.held{padding:.7rem .95rem;text-align:center;color:var(--dim);font-size:.79rem;
+      box-shadow:0 -1px 0 var(--rule)}
+.lnk{font:inherit;background:none;border:0;padding:0;color:var(--sound);
+     cursor:pointer;text-decoration:underline}
+.lnk:focus-visible{outline:2px solid var(--sound);outline-offset:2px;border-radius:3px}
 
 /* ---- section headings (below the fold) ----------------------------------- */
 .sec{display:flex;align-items:baseline;gap:1rem;margin:1.6rem 0 .8rem}
@@ -369,11 +382,11 @@ footer a:hover{text-decoration:underline}
   </div>
   <div class="wrap" style="padding-bottom:1.6rem">
     <div class="readout">
-      <div class="stat good"><div class="n mono">{{.CountDevices}}</div><div class="k">devices found</div></div>
-      <div class="stat"><div class="n mono">{{.CountIdentified}}</div><div class="k">identified</div></div>
-      <div class="stat"><div class="n mono">{{.CountNamed}}</div><div class="k">named</div></div>
-      <div class="stat{{if .CountFindings}} hot{{end}}"><div class="n mono">{{.CountFindings}}</div><div class="k">worth looking at</div></div>
-      {{if .CountCritical}}<div class="stat hot"><div class="n mono">{{.CountCritical}}</div><div class="k">critical</div></div>{{end}}
+      <div class="stat good"><div class="n mono" id="s-dev">{{.CountDevices}}</div><div class="k">devices found</div></div>
+      <div class="stat"><div class="n mono" id="s-ident">{{.CountIdentified}}</div><div class="k">identified</div></div>
+      <div class="stat"><div class="n mono" id="s-named">{{.CountNamed}}</div><div class="k">named</div></div>
+      <div class="stat{{if .CountFindings}} hot{{end}}"><div class="n mono" id="s-find">{{.CountFindings}}</div><div class="k">worth looking at</div></div>
+      {{if .CountCritical}}<div class="stat hot" id="s-crit-card"><div class="n mono" id="s-crit">{{.CountCritical}}</div><div class="k">critical</div></div>{{end}}
     </div>
 
     {{if .HasTime}}
@@ -384,9 +397,11 @@ footer a:hover{text-decoration:underline}
           <button class="chip" data-h="24">24 hours</button>
           <button class="chip" data-h="72">3 days</button>
           <button class="chip" data-h="168">7 days</button>
+          <button class="chip" data-h="336">14 days</button>
           <button class="chip" data-h="720">30 days</button>
+          <button class="chip" data-all="1">All</button>
         </div>
-        <span class="hint">drag the chart for any range · click a preset again to clear</span>
+        <span class="hint">or drag the chart for any range</span>
         <span class="sel" id="sel">{{.FirstLabel}} — {{.LastLabel}}</span>
       </div>
       <div class="plot" id="plot">
@@ -419,6 +434,7 @@ footer a:hover{text-decoration:underline}
            data-proto="{{.Protocols}}" data-sev="{{.Severity}}"
            data-s="{{.IP}} {{.Hostname}} {{.Identity}} {{.Class}} {{.Vendor}} {{.Model}} {{.Firmware}} {{.Serial}} {{.OTIDs}} {{.Users}}"
            data-unk="{{if .Unknown}}1{{else}}0{{end}}"
+           data-named="{{if .Hostname}}1{{else}}0{{end}}"
            style="--c:var(--c-{{.Class}})">
     <summary>
       <span class="ico" title="{{.ConfPct}}% confident">
@@ -486,12 +502,12 @@ footer a:hover{text-decoration:underline}
   <section class="pane">
     <div class="pane-head">
       <h2>Worth looking at</h2>
-      <span class="n">{{.CountFindings}}</span>
+      <span class="n" id="find-n">{{.CountFindings}}</span>
     </div>
     <div class="scroll">
     {{if .Findings}}
       {{range .Findings}}
-      <article class="find {{.Class}}">
+      <article class="find {{.Class}}" data-dev="{{.Device}}">
         <div class="top">
           <span class="sev">{{.Severity}}</span>
           <span class="addr">{{.Device}}</span>
@@ -504,6 +520,10 @@ footer a:hover{text-decoration:underline}
         {{if gt .Count 1}}<div class="rep">observed {{.Count}} times</div>{{end}}
       </article>
       {{end}}
+      <p class="clear" id="find-none" hidden>Nothing needing attention in this window.</p>
+      <p class="held" id="find-held" hidden><b id="find-held-n">0</b> more
+        <span id="find-held-c"></span>on devices that were quiet in this window ·
+        <button type="button" class="lnk" id="find-showall">show all</button></p>
     {{else}}
       <p class="clear">Nothing needing attention in this capture.</p>
     {{end}}
@@ -588,12 +608,17 @@ var rows=[].slice.call(document.querySelectorAll(".dev")),
     bars=[].slice.call(document.querySelectorAll(".bar")),
     shown=document.getElementById("shown"),
     none=document.getElementById("none"),
+    finds=[].slice.call(document.querySelectorAll(".find")),
+    findNone=document.getElementById("find-none"),
+    findHeld=document.getElementById("find-held"),
     q=document.getElementById("q"),
     sel=document.getElementById("sel"),
     brush=document.getElementById("brush"),
     plot=document.getElementById("plot"),
     note=document.getElementById("range-note"),
     NB=bars.length, lo=0, hi=NB-1, all=true, text="";
+
+function setNum(id,v){var e=document.getElementById(id); if(e) e.textContent=v;}
 
 var hourOf=bars.map(function(b){return +b.dataset.h;});
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
@@ -616,13 +641,16 @@ function activeIn(row){
 }
 
 function apply(){
-  var n=0, cls={}, proto={}, sev={}, talkers=[];
+  var n=0, ident=0, named=0, cls={}, proto={}, sev={}, talkers=[], vis={};
   rows.forEach(function(row){
     var hit=activeIn(row);
     if(hit&&text) hit=row.dataset.s.toLowerCase().indexOf(text)>=0;
     row.hidden=!hit;
     if(!hit){ row.open=false; return; }
     n++;
+    if(row.dataset.unk!=="1") ident++;
+    if(row.dataset.named==="1") named++;
+    vis[(row.dataset.s||"").split(" ")[0]]=1;
     cls[row.dataset.cls]=(cls[row.dataset.cls]||0)+1;
     (row.dataset.proto||"").split(" ").forEach(function(p){ if(p)proto[p]=(proto[p]||0)+1; });
     if(row.dataset.sev) sev[row.dataset.sev]=(sev[row.dataset.sev]||0)+1;
@@ -636,8 +664,32 @@ function apply(){
                   v:all||!tot?ev:Math.round(ev*win/tot)});
   });
 
+  // Findings follow the devices. A problem on a machine that was silent all
+  // window is not something to act on right now, and leaving the count at the
+  // whole-file total while the list below shrinks is the kind of small lie that
+  // makes people stop believing the rest of the numbers.
+  // Sensor-health findings are about the capture itself, so they always stand.
+  var fn=0, fc=0, held=0, heldCrit=0;
+  finds.forEach(function(f){
+    var dev=f.dataset.dev||"", keep=all||dev==="sensor"||!!vis[dev];
+    f.hidden=!keep;
+    if(keep){ fn++; if(f.classList.contains("critical")) fc++; }
+    else{ held++; if(f.classList.contains("critical")) heldCrit++; }
+  });
+  if(findNone) findNone.hidden=fn>0;
+  if(findHeld){
+    findHeld.hidden=!held;
+    setNum("find-held-n",held);
+    var hc=document.getElementById("find-held-c");
+    if(hc) hc.textContent=heldCrit?"("+heldCrit+" critical) ":"";
+  }
+
   shown.textContent=n+(n===1?" device":" devices");
   none.hidden=n>0;
+  setNum("s-dev",n); setNum("s-ident",ident); setNum("s-named",named);
+  setNum("s-find",fn); setNum("find-n",fn); setNum("s-crit",fc);
+  var critCard=document.getElementById("s-crit-card");
+  if(critCard) critCard.hidden=!fc;
   if(note) note.textContent=all?"whole capture":stamp(lo,0)+" — "+stamp(hi,1);
 
   bars.forEach(function(b,i){ b.classList.toggle("on",!all&&i>=lo&&i<=hi); });
@@ -718,19 +770,42 @@ function setRange(a,b,isAll){
   apply();
 }
 
+var presets=[].slice.call(document.querySelectorAll(".chip[data-h],.chip[data-all]")),
+    perBucket=NB>1?(hourOf[1]-hourOf[0])||1:1,
+    spanHours=NB*perBucket;
+
 function clearChips(){
-  [].forEach.call(document.querySelectorAll(".chip[data-h]"),function(o){
-    o.setAttribute("aria-pressed","false");});
+  presets.forEach(function(o){ o.setAttribute("aria-pressed","false"); });
 }
+
+// Presets behave as one control with exactly one choice active, rather than as
+// toggles that clear on a second click — that was only discoverable by reading
+// the hint text. "All" is now a button of its own, so the way out is visible.
+//
+// A preset wider than the data would select the whole capture under a label
+// that says otherwise. The first one that covers everything is kept, since it
+// honestly reads as "all of it", and anything longer is disabled.
+(function(){
+  var covered=false;
+  presets.forEach(function(c){
+    if(!c.dataset.h) return;
+    if(covered){ c.disabled=true; return; }
+    if(+c.dataset.h>=spanHours) covered=true;
+  });
+})();
+
+var allChip=presets.filter(function(c){return c.dataset.all})[0];
+var showAll=document.getElementById("find-showall");
+if(showAll&&allChip) showAll.addEventListener("click",function(){ allChip.click(); });
+
 // Presets measure back from the end of the capture, not from now: this is a
 // record of a period that has already happened.
-[].forEach.call(document.querySelectorAll(".chip[data-h]"),function(c){
+presets.forEach(function(c){
   c.addEventListener("click",function(){
-    var wasOn=c.getAttribute("aria-pressed")==="true";
+    if(c.disabled||!NB) return;
     clearChips();
-    if(wasOn||!NB){ setRange(0,NB-1,true); return; }  // clicking again clears it
     c.setAttribute("aria-pressed","true");
-    var perBucket=NB>1?(hourOf[1]-hourOf[0])||1:1;
+    if(c.dataset.all){ setRange(0,NB-1,true); return; }
     setRange(Math.max(0,NB-Math.ceil(+c.dataset.h/perBucket)),NB-1,false);
   });
 });
@@ -783,7 +858,16 @@ if(plot&&NB){
 });
 
 if(q) q.addEventListener("input",function(){ text=q.value.trim().toLowerCase(); apply(); });
-setRange(0,NB-1,true);
+
+// Open on the last 24 hours. That is the window someone actually checks, and
+// showing the whole file by default buries a day's worth of change in a month
+// of history. Captures shorter than a day open in full, because a "24 hours"
+// label over three hours of data would be a lie.
+(function(){
+  var c24=presets.filter(function(c){return c.dataset.h==="24"})[0],
+      start=(spanHours>24&&c24)?c24:allChip;
+  if(start) start.click(); else setRange(0,NB-1,true);
+})();
 })();
 </script>
 </body>

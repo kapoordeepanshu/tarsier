@@ -140,3 +140,62 @@ func TestIndustrialExposureIsCritical(t *testing.T) {
 		t.Error("no critical ot-exposed finding for Modbus reached from a public address")
 	}
 }
+
+// TestNewestObservationWins is the rotated-log case.
+//
+// A directory of rotated logs sorts lexically, so the live eve.json is read
+// before eve.json.1 and the oldest records land last. Firmware, model, serial
+// and MAC used to be plain assignments, which meant whichever file happened to
+// be read last decided the answer. Reading the same two events in either order
+// has to give the same device.
+func TestNewestObservationWins(t *testing.T) {
+	monday := `{"timestamp":"2026-07-27T09:00:00.000000+0000","event_type":"enip",` +
+		`"src_ip":"10.20.0.50","dest_ip":"10.20.0.9","dest_port":44818,"proto":"TCP",` +
+		`"app_proto":"enip","enip":{"response":{"identity":{` +
+		`"product_name":"1756-L71/B LOGIX5571","revision":"20.011","serial":"0x00a1b2c3"}}}}`
+	tuesday := `{"timestamp":"2026-07-28T09:00:00.000000+0000","event_type":"enip",` +
+		`"src_ip":"10.20.0.50","dest_ip":"10.20.0.9","dest_port":44818,"proto":"TCP",` +
+		`"app_proto":"enip","enip":{"response":{"identity":{` +
+		`"product_name":"1756-L71/B LOGIX5571","revision":"21.004","serial":"0x00a1b2c3"}}}}`
+
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{"in order", []string{monday, tuesday}},
+		{"newest file first", []string{tuesday, monday}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := resolve(t, tc.lines...)["10.20.0.50"]
+			if d == nil {
+				t.Fatal("device not found")
+			}
+			if d.Firmware != "21.004" {
+				t.Errorf("Firmware = %q, want Tuesday's 21.004 whichever order it was read in",
+					d.Firmware)
+			}
+		})
+	}
+}
+
+// TestNewestMACWins covers the same problem on a DHCP lease that moved to a
+// different machine. The address we report has to be the one seen most
+// recently, not the one in whichever file was parsed last.
+func TestNewestMACWins(t *testing.T) {
+	old := `{"timestamp":"2026-07-27T09:00:00.000000+0000","event_type":"dhcp",` +
+		`"src_ip":"10.0.0.5","dest_ip":"10.0.0.1","dhcp":{"assigned_ip":"10.0.0.5",` +
+		`"client_mac":"00:1b:21:aa:bb:cc","dhcp_type":"ack"}}`
+	recent := `{"timestamp":"2026-07-28T09:00:00.000000+0000","event_type":"dhcp",` +
+		`"src_ip":"10.0.0.5","dest_ip":"10.0.0.1","dhcp":{"assigned_ip":"10.0.0.5",` +
+		`"client_mac":"3c:22:fb:11:22:33","dhcp_type":"ack"}}`
+
+	for _, lines := range [][]string{{old, recent}, {recent, old}} {
+		d := resolve(t, lines...)["10.0.0.5"]
+		if d == nil {
+			t.Fatal("device not found")
+		}
+		if d.MAC != "3c:22:fb:11:22:33" {
+			t.Errorf("MAC = %q, want the most recently observed address", d.MAC)
+		}
+	}
+}

@@ -115,6 +115,16 @@ type Device struct {
 	// "Windows 7" are not competing answers — one refines the other — so a
 	// more specific conclusion wins even when a vaguer one scored higher.
 	specificity map[string]int
+	// latest remembers when each single-valued field was last observed, so an
+	// older record cannot overwrite a newer one.
+	//
+	// Records do not arrive in order and cannot be made to. A directory of
+	// rotated logs sorts lexically, which reads the live eve.json first and
+	// eve.json.10 before eve.json.2; a watcher catching up after downtime
+	// replays old files after new ones. Without this, a PLC whose firmware
+	// moved on Tuesday reports Monday's version depending on read order — the
+	// exact change this tool is meant to notice.
+	latest map[string]time.Time
 	// seen deduplicates evidence before it is combined.
 	//
 	// Observing the same signal repeatedly is not new information. A host that
@@ -149,8 +159,26 @@ func newDevice(ip string) *Device {
 		ExternalDsts:  map[string]bool{},
 		weights:       map[string]float64{},
 		specificity:   map[string]int{},
+		latest:        map[string]time.Time{},
 		seen:          map[string]bool{},
 	}
+}
+
+// setLatest assigns a single-valued field only if this observation is at least
+// as recent as the one that set it, and says whether it did.
+//
+// Records with no usable timestamp fall back to last-write-wins among
+// themselves, but never displace a value that came with one.
+func (d *Device) setLatest(key string, field *string, value string, t time.Time) bool {
+	if value == "" {
+		return false
+	}
+	if prev, ok := d.latest[key]; ok && t.Before(prev) {
+		return false
+	}
+	*field = value
+	d.latest[key] = t
+	return true
 }
 
 // SortedVLANs lists the 802.1Q tags this device was seen on, lowest first.

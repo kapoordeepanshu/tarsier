@@ -2,6 +2,7 @@ package identify
 
 import (
 	"strings"
+	"time"
 
 	"tarsier/internal/eve"
 )
@@ -29,7 +30,7 @@ func (r *Resolver) addDHCP(rec *eve.Record) {
 	d := r.device(ip)
 
 	if mac := rec.Str("dhcp.client_mac"); mac != "" {
-		r.applyMAC(d, mac)
+		r.applyMAC(d, mac, rec.Timestamp())
 	}
 	if host := rec.Str("dhcp.hostname"); host != "" {
 		d.addHostname(host)
@@ -58,22 +59,28 @@ func (r *Resolver) addARP(rec *eve.Record) {
 		if !isPrivate(ip) || mac == "" || strings.HasPrefix(mac, "00:00:00:00:00:00") {
 			continue
 		}
-		r.applyMAC(r.device(ip), mac)
+		r.applyMAC(r.device(ip), mac, rec.Timestamp())
 	}
 }
 
 // applyMAC records a hardware address and everything its OUI implies.
-func (r *Resolver) applyMAC(d *Device, mac string) {
+//
+// The address we keep is the newest one seen, not the last one read. The
+// evidence below is still recorded for every address — each sighting really did
+// happen, whenever it happened.
+func (r *Resolver) applyMAC(d *Device, mac string, t time.Time) {
 	if d == nil || mac == "" {
 		return
 	}
-	d.MAC = strings.ToLower(mac)
+	mac = strings.ToLower(mac)
 
 	// A randomised MAC is not hardware. Phones and laptops rotate their address
 	// per network by default, so treating one as a manufacturer assignment both
 	// invents a vendor and, worse, counts one device as many over time.
+	if d.setLatest("mac", &d.MAC, mac, t) {
+		d.RandomMAC = IsLocallyAdministered(mac)
+	}
 	if IsLocallyAdministered(mac) {
-		d.RandomMAC = true
 		return
 	}
 
@@ -281,7 +288,7 @@ func (r *Resolver) addSNMP(rec *eve.Record, destIP string) {
 	d.note("snmp", "SNMP agent", "class=network", 0.6)
 
 	if desc := rec.FirstStr("snmp.sysdescr", "snmp.sys_descr"); desc != "" {
-		d.Model = desc
+		d.setLatest("model", &d.Model, desc, rec.Timestamp())
 		applySubstringRules(d, "snmp.sysDescr", desc, dhcpVendorClass)
 		applySubstringRules(d, "snmp.sysDescr", desc, serverBanners)
 		d.noteSpec("snmp.sysDescr", desc, "vendor="+firstWord(desc), 0.8, 2)

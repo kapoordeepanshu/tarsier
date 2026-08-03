@@ -57,7 +57,7 @@ func (r *Resolver) addENIPIdentity(rec *eve.Record, d *Device) {
 	// The product name is a free-text string the device chose for itself, such
 	// as "1756-L71/B LOGIX5571". It is worth more than any lookup table.
 	if name := strings.TrimSpace(get("product_name")); name != "" {
-		d.Model = name
+		d.setLatest("model", &d.Model, name, rec.Timestamp())
 		d.noteSpec("enip.identity.product_name", name, "class=plc", 0.95, 2)
 		// Product names carry the vendor often enough to be worth checking
 		// against the banner table, which already knows the major ICS vendors.
@@ -66,11 +66,11 @@ func (r *Resolver) addENIPIdentity(rec *eve.Record, d *Device) {
 	}
 
 	if rev := strings.TrimSpace(get("revision")); rev != "" {
-		d.Firmware = rev
+		d.setLatest("firmware", &d.Firmware, rev, rec.Timestamp())
 		d.note("enip.identity.revision", rev, "class=plc", 0.6)
 	}
 	if serial := strings.TrimSpace(get("serial")); serial != "" {
-		d.Serial = serial
+		d.setLatest("serial", &d.Serial, serial, rec.Timestamp())
 	}
 
 	// vendor_id is an ODVA-assigned number. Only translate the ones we can
