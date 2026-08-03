@@ -266,6 +266,62 @@ func (r *Resolver) Devices() []*Device {
 	return out
 }
 
+// Prune forgets everything older than the cutoff and reports how many devices
+// it dropped.
+//
+// A one-shot scan never needs this — it reads a file and exits. A watcher runs
+// for months, and without a rolling window every device that ever appeared stays
+// in the inventory forever, which turns "what is on my network" into "what has
+// ever been on my network". Those are different questions and only one of them
+// is useful.
+//
+// A device is forgotten only once it has been silent for the whole window. Its
+// hourly activity is trimmed either way, because that is what the report draws
+// its timeline from.
+func (r *Resolver) Prune(before time.Time) int {
+	if before.IsZero() {
+		return 0
+	}
+	cutoffHour := before.Unix() / 3600
+
+	dropped := 0
+	for ip, d := range r.devices {
+		if d.LastSeen.Before(before) {
+			delete(r.devices, ip)
+			dropped++
+			continue
+		}
+		for h := range d.Activity {
+			if h < cutoffHour {
+				delete(d.Activity, h)
+			}
+		}
+	}
+
+	if dropped > 0 {
+		// Findings outlive nothing. Clearing the dedup key as well means that if
+		// the device comes back still broken, we say so again rather than
+		// staying quiet because we mentioned it last month.
+		kept := r.findings[:0]
+		for _, f := range r.findings {
+			if f.Device != "sensor" {
+				if _, live := r.devices[f.Device]; !live {
+					delete(r.seenFind, f.Device+"|"+f.Kind)
+					continue
+				}
+			}
+			kept = append(kept, f)
+		}
+		r.findings = kept
+	}
+
+	// The timeline starts at the window, not at the first thing we ever saw.
+	if r.First.Before(before) {
+		r.First = before
+	}
+	return dropped
+}
+
 // EventCounts reports how many of each EVE event type were seen. Used to tell a
 // user that their Suricata is not logging the metadata we need — the most
 // common reason this tool underperforms, and something they cannot otherwise

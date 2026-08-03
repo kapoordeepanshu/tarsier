@@ -12,6 +12,7 @@ package eve
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"strings"
@@ -62,6 +63,27 @@ func (r *Reader) Next() *Record {
 	}
 	r.err = r.sc.Err()
 	return nil
+}
+
+// ParseLine decodes one EVE line, for callers that already have their own
+// framing — the log follower hands over complete lines as they arrive rather
+// than streaming a file.
+//
+// Blank and malformed lines return nil rather than an error, on the same
+// reasoning as Reader.Next: a half-written record caught mid-rotation is
+// ordinary, and stopping on it would be worse than skipping it.
+func ParseLine(line []byte) *Record {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(trimmed, &m); err != nil {
+		return nil
+	}
+	raw := make([]byte, len(trimmed))
+	copy(raw, trimmed)
+	return &Record{Raw: raw, fields: m}
 }
 
 // Err reports a read failure, if any. A malformed line is not a read failure.

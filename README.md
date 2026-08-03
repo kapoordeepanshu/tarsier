@@ -15,10 +15,12 @@ mirrors.</sub>
 ---
 
 > ### What works today
-> **The scanner.** Point it at an `eve.json` and you get the inventory, the findings and the report
-> below. That is real and you can run it in two minutes.
+> **The scanner and the watcher.** Point `tarsier-scan` at an `eve.json` for a one-shot report, or
+> leave `tarsier-watch` following the live log to keep one current. Both are real and you can run
+> them in two minutes.
 >
-> **Not yet built:** live monitoring, a server, a web UI, a remote agent. Those are described under
+> **Not yet built:** a server, a web UI, a remote agent, and notifications that reach out to you
+> instead of waiting to be read. Those are described under
 > [Where this is going](#where-this-is-going), in future tense, with no commands — because none of
 > them exist yet and pretending otherwise would waste your afternoon.
 >
@@ -99,10 +101,10 @@ Needs [Go 1.22+](https://go.dev/dl/). Nothing else — no dependencies, no datab
 ```bash
 git clone https://github.com/kapoordeepanshu/tarsier.git
 cd tarsier
-go build ./cmd/tarsier-scan ./cmd/tarsier-diff
+go build ./cmd/tarsier-scan ./cmd/tarsier-watch ./cmd/tarsier-diff
 ```
 
-`tarsier-diff` is currently source-only; the release ships `tarsier-scan`.
+`tarsier-watch` and `tarsier-diff` are currently source-only; the release ships `tarsier-scan`.
 
 </details>
 
@@ -175,8 +177,64 @@ silent until it has something to say:
               || mail -s "network changed" you@example.com
 ```
 
-**Until live monitoring lands, that is the supported way to get change detection** — no agent, no
-server, nothing to keep running.
+---
+
+## Keep it running
+
+`tarsier-scan` reads a file and exits, which means somebody has to remember to run it.
+`tarsier-watch` doesn't: it follows the live log and rewrites the report as events arrive.
+
+```bash
+tarsier-watch -html /var/www/survey.html /var/log/suricata/eve.json
+```
+
+```
+14:02:11  replayed 4 rotated logs — 1,284,902 events
+14:02:11  following /var/log/suricata/eve.json — writing /var/www/survey.html every 1m0s
+14:02:11  214 devices · 11 findings · 1,284,902 events
+```
+
+**Rotation is handled, both kinds.** logrotate's default renames the file and creates a new one; a
+lot of setups instead copy it and truncate it in place. Those need different handling, and assuming
+only the first is how a log reader silently loses a chunk of every rotation. The file we hold is
+drained to EOF before we let go of it, so the bytes written just before a rename are not lost. A
+partial last line is held until the writer finishes it, so the parser never sees half a record.
+
+**It holds a rolling window**, thirty days by default (`-retain`). A device silent for longer than
+that is forgotten — otherwise "what is on my network" quietly becomes "what has ever been on my
+network", and those are different questions. Raw traffic is never copied or kept: `eve.json` stays a
+short-lived buffer that Suricata and logrotate manage, and what survives here is the conclusions,
+which are small.
+
+**It cannot affect Suricata.** We open the log read-only, never write to the log directory, and
+never apply backpressure — if we fall behind we fall behind and say so. On Windows the handle is
+opened so that rotation still works, because a reader that blocks logrotate has broken the thing it
+was only supposed to watch.
+
+Restarting is safe and needs no saved state: it replays the rotated logs still on disk to rebuild
+the picture, then attaches to the live file. Whatever your rotation kept is the window you get back.
+
+```ini
+# /etc/systemd/system/tarsier.service
+[Unit]
+Description=Tarsier network inventory
+After=suricata.service
+
+[Service]
+ExecStart=/usr/local/bin/tarsier-watch -html /var/www/survey.html /var/log/suricata/eve.json
+User=tarsier
+Restart=on-failure
+ProtectSystem=strict
+ReadOnlyPaths=/var/log/suricata
+ReadWritePaths=/var/www
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`tarsier-watch -h` for the full set of flags. It writes through a temporary file and renames into
+place, so a browser reloading the report never catches it half-written.
 
 ---
 
@@ -387,18 +445,15 @@ JA4SSH) is under the FoxIO License 1.1 and is deliberately not implemented.
 No dates. A roadmap with dates on it is a promise, and missing one costs more trust than making it
 ever bought. Nothing below exists yet — there are no commands here because there is nothing to run.
 
-**Live monitoring** is next, and it's the one that matters. Following `eve.json` as it's written,
-detecting rotation by inode rather than filename, persisting the read offset so a restart resumes
-exactly where it stopped, and never applying backpressure to Suricata. Until then, `-json` on a
-schedule plus `tarsier-diff` covers change detection.
-
-**A rolling window on disk** so the report can look back thirty days without keeping thirty days of
-raw traffic. The conclusions are tiny — a device record and an hourly activity byte — so this is
-tens of megabytes, not hundreds of gigabytes. Raw traffic stays what it already is: a short-lived
-buffer that Suricata and logrotate manage.
-
 **Change notification**, so a new device or an expiring certificate reaches you instead of waiting to
-be found.
+be found. Today that means `tarsier-diff` on a schedule; it should be the watcher noticing and
+telling you.
+
+**The rolling window on disk.** `tarsier-watch` already keeps one in memory and rebuilds it from
+your rotated logs on restart, which is enough for thirty days on any sensor that retains that much.
+Persisting it would let the window outlive your log rotation instead of being bounded by it. The
+conclusions are small — a device record and an hourly activity byte — so this is tens of megabytes,
+not hundreds of gigabytes.
 
 **Segmentation policy** — declare the zones you intended, get told where reality disagrees.
 
