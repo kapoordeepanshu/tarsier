@@ -309,6 +309,50 @@ would be noise wearing the costume of signal.
 
 ---
 
+## Check your segmentation
+
+Every framework asks for network segmentation and almost nobody verifies it, because verifying it has
+meant either trusting the firewall config or running a scan you are not allowed to run. Describe the
+network you *meant* to build, and Tarsier reports where the traffic disagrees:
+
+```
+zone office  10.0.1.0/24 10.0.2.0/24
+zone cameras 10.0.7.0/24
+zone card    10.0.5.0/24
+zone ot      10.0.20.0/24
+
+allow office -> servers
+```
+
+```bash
+tarsier-scan -zones zones.conf /var/log/suricata/
+```
+
+```
+HIGH   10.0.1.21   Traffic crossed from office to cameras, which your policy does not allow
+                   ...this device is talking across that line anyway — first seen going to
+                   10.0.7.31:554. Either the firewall rule is not doing what it looks like it
+                   does, or there is a path around it.
+                   → Fix: check the firewall rule between office and cameras. If the crossing
+                     is intended, add 'allow office -> cameras' so it stops being reported.
+```
+
+Deny-by-default between declared zones; traffic inside a zone is always fine; **an address you never
+declared raises nothing at all** — we don't know where you meant it to live, and guessing would bury
+the real findings under noise. A typo in a zone name refuses to load rather than silently never
+matching, because a policy that fails open reports a clean network for the one question you most
+wanted answered.
+
+Zones are CIDR only. VLAN tags look tempting, but a sensor watching a routed link sees one tag for
+the whole frame and cannot tell the two endpoints apart — a policy that appeared to check VLANs while
+silently checking nothing would be worse than not offering it.
+
+A commented starting point is at [`docs/zones.example.conf`](docs/zones.example.conf). Works with
+`tarsier-watch -zones` too, so a crossing that starts today reaches you through the same change
+report as everything else.
+
+---
+
 ## Configure Suricata
 
 Most installs log alerts only. Tarsier needs the metadata. One file, one restart, fully reversible —
@@ -521,8 +565,6 @@ your rotated logs on restart, which is enough for thirty days on any sensor that
 Persisting it would let the window outlive your log rotation instead of being bounded by it. The
 conclusions are small — a device record and an hourly activity byte — so this is tens of megabytes,
 not hundreds of gigabytes.
-
-**Segmentation policy** — declare the zones you intended, get told where reality disagrees.
 
 **The identity graph** — user → devices → services, from the Kerberos, LDAP and SMB names already
 being collected.

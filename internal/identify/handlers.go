@@ -626,6 +626,11 @@ func (r *Resolver) addFlow(rec *eve.Record, srcIP, destIP string) {
 		r.device(srcIP).ExternalDsts[destIP] = true
 	}
 
+	// Segmentation is checked here rather than on every event type: a flow
+	// record is emitted for the conversation as a whole, so one check per
+	// conversation says what a check per packet would, without the repetition.
+	r.checkSegmentation(srcIP, destIP, destPort)
+
 	// Industrial traffic often arrives as a flow record carrying app_proto
 	// rather than as a dedicated modbus/dnp3/enip event, because those event
 	// types are only emitted when explicitly configured. Check here too —

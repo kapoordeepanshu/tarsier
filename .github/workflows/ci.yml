@@ -82,6 +82,45 @@ jobs:
           assert len(rows)==19, len(rows)
           assert all('/' in r[0] for r in rows[1:])"
 
+      - name: Segmentation policy
+        run: |
+          set -e
+          # A policy that permits what is actually there must stay silent, and
+          # one that forbids it must not. Both directions matter: a check that
+          # fires on everything is as useless as one that never fires.
+          cat > strict.conf <<'EOF'
+          zone office  10.0.1.0/24
+          zone cameras 10.0.7.0/24
+          zone servers 10.0.0.0/24
+          allow office -> servers
+          EOF
+          ./tarsier-scan -zones strict.conf -json strict.json testdata/demo-week.json
+          python3 -c "
+          import json
+          f=[x for x in json.load(open('strict.json'))['findings'] if 'segmentation' in x['kind']]
+          assert f, 'a forbidden crossing went unreported'
+          assert any(x['device']=='10.0.1.21' for x in f), f
+          print(len(f),'segmentation findings')"
+
+          cat > permissive.conf <<'EOF'
+          zone office 10.0.1.0/24
+          zone rest   10.0.0.0/24 10.0.4.0/24 10.0.7.0/24 10.0.9.0/24
+          allow office <-> rest
+          EOF
+          ./tarsier-scan -zones permissive.conf -json permissive.json testdata/demo-week.json
+          python3 -c "
+          import json
+          f=[x for x in json.load(open('permissive.json'))['findings'] if 'segmentation' in x['kind']]
+          assert not f, f'permitted traffic was reported anyway: {f}'
+          print('permitted traffic stays silent')"
+
+          # A typo in a zone name has to be fatal. A policy that fails open
+          # reports a clean network for the one question the operator cared about.
+          printf 'zone a 10.0.0.0/24\nallow a -> tyop\n' > broken.conf
+          ./tarsier-scan -zones broken.conf testdata/demo-week.json && \
+            { echo 'a broken policy was accepted'; exit 1; }
+          echo "broken policy refused"
+
       - name: Follow a live log across a rotation
         run: |
           set -e

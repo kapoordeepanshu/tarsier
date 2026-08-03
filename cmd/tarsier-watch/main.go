@@ -50,6 +50,7 @@ func main() {
 		notify   = flag.Duration("notify", time.Hour, "how often to report what changed (0 to disable)")
 		changes  = flag.String("changes", "", "append each change report to this file as JSON")
 		onChange = flag.String("on-change", "", "run this command when something changes, report on stdin")
+		zones    = flag.String("zones", "", "check traffic against a segmentation policy file")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -74,9 +75,23 @@ func main() {
 		die("cannot read " + filepath.Dir(path) + ": " + err.Error())
 	}
 
+	res := identify.NewResolver()
+	if *zones != "" {
+		f, err := os.Open(*zones)
+		if err != nil {
+			die("-zones: " + err.Error())
+		}
+		policy, err := identify.ParsePolicy(f)
+		f.Close()
+		if err != nil {
+			die("-zones: " + err.Error())
+		}
+		res.SetPolicy(policy)
+	}
+
 	w := &watcher{
 		path:        path,
-		res:         identify.NewResolver(),
+		res:         res,
 		htmlOut:     *htmlOut,
 		jsonOut:     *jsonOut,
 		retention:   retention,

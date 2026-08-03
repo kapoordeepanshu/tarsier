@@ -27,6 +27,10 @@ type Resolver struct {
 	// SensorHealth is populated from Suricata's own "stats" events.
 	SensorHealth SensorHealth
 
+	// policy is the declared segmentation, when one was supplied. Nil means
+	// segmentation is not checked and costs nothing.
+	policy *Policy
+
 	// Window bounds which records are considered at all. Zero means unbounded.
 	from, to time.Time
 	// First and Last are the actual extent of the data that survived the

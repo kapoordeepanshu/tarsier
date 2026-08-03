@@ -53,6 +53,7 @@ func main() {
 	last := flag.String("last", "", "only the most recent period, e.g. 24h, 7d, 30m")
 	since := flag.String("since", "", "only events at or after this time (2026-07-30 or 2026-07-30T09:00)")
 	until := flag.String("until", "", "only events at or before this time")
+	zones := flag.String("zones", "", "check traffic against a segmentation policy file")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -73,6 +74,15 @@ func main() {
 
 	res := identify.NewResolver()
 	res.SetWindow(from, to)
+
+	if *zones != "" {
+		policy, err := loadPolicy(*zones)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "tarsier-scan: -zones:", err)
+			os.Exit(2)
+		}
+		res.SetPolicy(policy)
+	}
 	var total, skipped int
 
 	for _, path := range inputs {
@@ -327,6 +337,18 @@ func expand(args []string) ([]string, error) {
 		out = append(out, matches...)
 	}
 	return out, nil
+}
+
+// loadPolicy reads a segmentation policy. A malformed one is fatal rather than
+// ignored: a policy that silently failed to load would report a clean network
+// for the one question the operator most wanted answered.
+func loadPolicy(path string) (*identify.Policy, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return identify.ParsePolicy(f)
 }
 
 func openOne(arg string) (io.ReadCloser, error) {
