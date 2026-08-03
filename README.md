@@ -245,6 +245,24 @@ WantedBy=multi-user.target
 `tarsier-watch -h` for the full set of flags. It writes through a temporary file and renames into
 place, so a browser reloading the report never catches it half-written.
 
+### A shared dashboard, without a server to run
+
+Write the report into a directory something already serves, and everyone has a URL:
+
+```bash
+tarsier-watch -html /var/www/html/survey.html /var/log/suricata/eve.json
+```
+
+When the report is being served it notices that it has been rewritten and picks the new data up on
+its own. If you are in the middle of something — a filter typed, a time range held, a device
+expanded — it offers you a **New data · reload** button instead of yanking the page out from under
+you. Opened from a USB stick there is nothing to poll, so it does nothing at all and the file stays
+the single offline artefact it claims to be.
+
+That is the whole "dashboard": a static file and any web server. No database, no login, no service of
+ours listening on a port. **There is no web UI** — this is a generated page, not an application, and
+you cannot configure anything through it.
+
 ### Being told, instead of remembering to look
 
 The watcher already knows what changed. `-on-change` runs a command when something does — hourly by

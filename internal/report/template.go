@@ -187,6 +187,20 @@ h1 .of{color:var(--sound)}
      cursor:pointer;text-decoration:underline}
 .lnk:focus-visible{outline:2px solid var(--sound);outline-offset:2px;border-radius:3px}
 
+/* Offered, not imposed. When the file is being served and has been rewritten
+   underneath a reader, they get a way to pick the new data up — not a reload
+   that throws away the device they were halfway through reading. */
+.fresh{position:fixed;right:1.1rem;bottom:1.1rem;z-index:20;
+       font:inherit;font-size:.82rem;font-weight:550;
+       background:var(--sound);color:#fff;border:0;border-radius:999px;
+       padding:.6rem 1.05rem;cursor:pointer;box-shadow:var(--shadow-lg)}
+.fresh:hover{filter:brightness(1.08)}
+.fresh:focus-visible{outline:2px solid var(--sound);outline-offset:3px}
+@media (prefers-reduced-motion:no-preference){
+  .fresh{animation:rise .22s ease-out}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+}
+
 /* ---- section headings (below the fold) ----------------------------------- */
 .sec{display:flex;align-items:baseline;gap:1rem;margin:1.6rem 0 .8rem}
 .sec h2{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.7rem;font-weight:600;
@@ -590,6 +604,8 @@ footer a:hover{text-decoration:underline}
   </footer>
 </main>
 
+<button class="fresh" id="fresh" type="button" hidden>New data · reload</button>
+
 <script>
 (function(){
 "use strict";
@@ -867,6 +883,43 @@ if(q) q.addEventListener("input",function(){ text=q.value.trim().toLowerCase(); 
   var c24=presets.filter(function(c){return c.dataset.h==="24"})[0],
       start=(spanHours>24&&c24)?c24:allChip;
   if(start) start.click(); else setRange(0,NB-1,true);
+})();
+
+// Pick up new data when this file is being served and something is rewriting it
+// — tarsier-watch on a wall display, say. A dashboard that is quietly three
+// hours stale is worse than one that is obviously switched off.
+//
+// Opened from a USB stick there is nothing to poll, so this does nothing at all
+// and the report stays the single offline file it claims to be.
+(function(){
+  if(!/^https?:$/.test(location.protocol)) return;
+
+  var fresh=document.getElementById("fresh"), seen=null;
+  if(fresh) fresh.addEventListener("click",function(){ location.reload(); });
+
+  // Someone typing a filter, holding a time range or reading an expanded device
+  // is mid-thought. Reloading under them loses their place, so they get offered
+  // the new data instead of having it forced on them.
+  function reading(){
+    return (q && q.value.trim() !== "") || !all ||
+           !!document.querySelector(".dev[open]");
+  }
+
+  function check(){
+    fetch(location.href, {method:"HEAD", cache:"no-store"}).then(function(res){
+      if(!res.ok) return;
+      var id=res.headers.get("last-modified") || res.headers.get("etag") ||
+             res.headers.get("content-length");
+      if(!id) return;                 // nothing to compare against; stay quiet
+      if(seen===null){ seen=id; return; }
+      if(id===seen) return;
+      if(reading()){ if(fresh) fresh.hidden=false; return; }
+      location.reload();
+    }).catch(function(){ /* served from somewhere unreachable: not our problem */ });
+  }
+
+  setInterval(check, 30000);
+  check();
 })();
 })();
 </script>
