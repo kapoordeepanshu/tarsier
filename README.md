@@ -220,8 +220,14 @@ never apply backpressure — if we fall behind we fall behind and say so. On Win
 opened so that rotation still works, because a reader that blocks logrotate has broken the thing it
 was only supposed to watch.
 
-Restarting is safe and needs no saved state: it replays the rotated logs still on disk to rebuild
-the picture, then attaches to the live file. Whatever your rotation kept is the window you get back.
+**Restarting keeps the window.** Pass `-state /var/lib/tarsier/state.json` and the inventory is
+restored on start, with following resuming at the exact byte it stopped at — so a restart neither
+forgets the network nor counts the same events twice. Without it, the picture is rebuilt by replaying
+the rotated logs still on disk, which works but caps your window at whatever logrotate kept.
+
+The state file is conclusions, never traffic: one record per device plus a byte per device-hour. A
+month is tens of megabytes, where a month of `eve.json` is hundreds of gigabytes. That difference is
+why this needs no database.
 
 ```ini
 # /etc/systemd/system/tarsier.service
@@ -230,12 +236,13 @@ Description=Tarsier network inventory
 After=suricata.service
 
 [Service]
-ExecStart=/usr/local/bin/tarsier-watch -html /var/www/survey.html /var/log/suricata/eve.json
+ExecStart=/usr/local/bin/tarsier-watch -html /var/www/survey.html           -state /var/lib/tarsier/state.json /var/log/suricata/eve.json
 User=tarsier
 Restart=on-failure
 ProtectSystem=strict
 ReadOnlyPaths=/var/log/suricata
 ReadWritePaths=/var/www
+StateDirectory=tarsier
 NoNewPrivileges=yes
 
 [Install]
@@ -584,12 +591,6 @@ JA4SSH) is under the FoxIO License 1.1 and is deliberately not implemented.
 
 No dates. A roadmap with dates on it is a promise, and missing one costs more trust than making it
 ever bought. Nothing below exists yet — there are no commands here because there is nothing to run.
-
-**The rolling window on disk.** `tarsier-watch` already keeps one in memory and rebuilds it from
-your rotated logs on restart, which is enough for thirty days on any sensor that retains that much.
-Persisting it would let the window outlive your log rotation instead of being bounded by it. The
-conclusions are small — a device record and an hourly activity byte — so this is tens of megabytes,
-not hundreds of gigabytes.
 
 **A server**, eventually, so history outlives one sensor's local logs. It is last on purpose: the
 first four need no server, and adding one turns a five-minute deployment into a project.

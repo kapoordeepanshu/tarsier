@@ -290,9 +290,29 @@ func (d *Device) resolve() {
 	bestOS, bestOSW, bestOSSpec := "", 0.0, 0
 	bestVendor, bestVendorW := "", 0.0
 
-	for k, w := range d.weights {
+	// Iterated in sorted order, and every tie broken explicitly.
+	//
+	// This used to range over the map and compare with a bare >, which meant two
+	// conclusions of exactly equal weight were separated by Go's randomised map
+	// order: the same capture could identify a host as a server on one run and a
+	// workstation on the next. Nothing about that is visible in a single report,
+	// and it quietly poisons everything built on top — a diff between two
+	// identical scans would announce that the class had changed, and a watcher
+	// would send somebody that news at three in the morning.
+	keys := make([]string, 0, len(d.weights))
+	for k := range d.weights {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	bestOSSpec = 0
+	for _, k := range keys {
+		w := d.weights[k]
 		switch {
 		case len(k) > 6 && k[:6] == "class=":
+			// Sorted keys make > alone deterministic: the first of an equal pair
+			// wins, and "first" is now alphabetical rather than whatever the
+			// runtime felt like.
 			if w > bestClassW {
 				bestClass, bestClassW = Class(k[6:]), w
 			}

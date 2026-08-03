@@ -174,6 +174,35 @@ jobs:
                   assert isinstance(d[k], list), (k, d[k])
           print('change log is well formed')"
 
+      - name: Keep the inventory across a restart
+        run: |
+          set -e
+          mkdir -p keep
+          sed -n '1,200p' testdata/demo-week.json > keep/eve.json
+
+          ./tarsier-watch -json keep/a.json -state keep/state.json             -every 1s -poll 500ms -notify 0 keep/eve.json > keep/a.log 2>&1 &
+          sleep 3; kill %1 2>/dev/null || true; sleep 1
+          test -s keep/state.json || { echo 'no state was written'; exit 1; }
+
+          # Rotate the log out from under it entirely. Without state this run
+          # would come back knowing nothing; the whole point is that it does not.
+          mv keep/eve.json keep/eve.json.1
+          sed -n '201,400p' testdata/demo-week.json > keep/eve.json
+
+          ./tarsier-watch -json keep/b.json -state keep/state.json -catchup=false             -every 1s -poll 500ms -notify 0 keep/eve.json > keep/b.log 2>&1 &
+          sleep 3; kill %1 2>/dev/null || true; sleep 1
+          cat keep/b.log
+          grep -q "restored" keep/b.log || { echo 'state was not restored'; exit 1; }
+
+          python3 -c "
+          import json
+          a=json.load(open('keep/a.json')); b=json.load(open('keep/b.json'))
+          # Devices from the first run must survive a log that no longer exists.
+          old={d['ip'] for d in a['devices']}; new={d['ip'] for d in b['devices']}
+          assert old <= new, f'lost devices across restart: {old-new}'
+          assert b['events'] > a['events'], (a['events'], b['events'])
+          print(len(new),'devices after restart,',b['events'],'events')"
+
   cross-compile:
     name: Cross-compile
     runs-on: ubuntu-latest

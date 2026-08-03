@@ -187,3 +187,85 @@ func TestTrimsCarriageReturn(t *testing.T) {
 		t.Fatalf("= %q, want [line]", got)
 	}
 }
+
+// Resuming is what lets a restart avoid re-reading and double-counting.
+func TestResumeContinuesWhereItStopped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "eve.json")
+	write(t, path, "one\ntwo\n")
+
+	first := New(path)
+	if got := collect(t, first); len(got) != 2 {
+		t.Fatalf("first pass = %q", got)
+	}
+	off, sig := first.Position()
+	first.Close()
+
+	write(t, path, "three\n")
+
+	second := New(path)
+	defer second.Close()
+	ok, err := second.Resume(off, sig)
+	if err != nil || !ok {
+		t.Fatalf("Resume = %v, %v; want true, nil", ok, err)
+	}
+	got := collect(t, second)
+	if len(got) != 1 || got[0] != "three" {
+		t.Fatalf("after resume = %q, want only [three]", got)
+	}
+}
+
+// A different file at the same path must not be resumed into: seeking to a
+// stale offset would skip past events that were never read.
+func TestResumeRefusesWhenTheFileChanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "eve.json")
+	write(t, path, "one\ntwo\nthree\n")
+
+	first := New(path)
+	collect(t, first)
+	off, sig := first.Position()
+	first.Close()
+
+	// Rotated away and replaced while we were gone.
+	os.Remove(path)
+	write(t, path, "brand\nnew\ncontent\n")
+
+	second := New(path)
+	defer second.Close()
+	ok, err := second.Resume(off, sig)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if ok {
+		t.Fatal("resumed into a different file")
+	}
+	if got := collect(t, second); len(got) != 3 || got[0] != "brand" {
+		t.Fatalf("= %q, want the whole new file", got)
+	}
+}
+
+// Truncated while we were away: the offset is past the end, so start over.
+func TestResumeRefusesAfterTruncation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "eve.json")
+	write(t, path, "one\ntwo\nthree\n")
+
+	first := New(path)
+	collect(t, first)
+	off, sig := first.Position()
+	first.Close()
+
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	write(t, path, "after\n")
+
+	second := New(path)
+	defer second.Close()
+	ok, _ := second.Resume(off, sig)
+	if ok {
+		t.Fatal("resumed past the end of a truncated file")
+	}
+	if got := collect(t, second); len(got) != 1 || got[0] != "after" {
+		t.Fatalf("= %q, want [after]", got)
+	}
+}

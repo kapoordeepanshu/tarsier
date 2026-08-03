@@ -20,6 +20,8 @@ package tail
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -215,4 +217,74 @@ func (f *Follower) recheck() (bool, error) {
 	}
 
 	return false, nil
+}
+
+// Position reports where the follower has read to, and a fingerprint of the file
+// it was reading, so a caller persisting its own state can resume there.
+//
+// The fingerprint is the head of the file rather than its inode. Inodes are not
+// portable, are not stable across a restore, and cannot be written to a file and
+// believed later — whereas a log whose first bytes still match is, for this
+// purpose, the same log.
+func (f *Follower) Position() (offset int64, sig string) {
+	if f.file == nil || f.off <= 0 {
+		return 0, ""
+	}
+	return f.off, fingerprint(f.file, f.off)
+}
+
+// Resume continues from a position recorded earlier, and reports whether it
+// could.
+//
+// It refuses when the file's head no longer matches, or when the file is now
+// shorter than the offset. Both mean the log was rotated or truncated while we
+// were away, and starting from the beginning is right — re-reading a little is
+// recoverable, whereas silently skipping past unread events is not.
+func (f *Follower) Resume(offset int64, sig string) (bool, error) {
+	if offset <= 0 || sig == "" {
+		return false, nil
+	}
+	if f.file == nil {
+		opened, err := f.open()
+		if err != nil || !opened {
+			return false, err
+		}
+	}
+	info, err := f.file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if info.Size() < offset {
+		return false, nil
+	}
+	if fingerprint(f.file, offset) != sig {
+		return false, nil
+	}
+	if _, err := f.file.Seek(offset, io.SeekStart); err != nil {
+		return false, err
+	}
+	f.off = offset
+	f.partial = f.partial[:0]
+	return true, nil
+}
+
+// fingerprint hashes the head of the file, over a length derived from the
+// offset so that both sides of a resume measure the same bytes.
+//
+// Hashing "the first 256 bytes, or the whole file if it is smaller" was the
+// first attempt and was quietly wrong: a young log changes its own fingerprint
+// every time it grows, so a resume would always be refused and every restart
+// would re-read from the beginning.
+func fingerprint(file *os.File, offset int64) string {
+	n := offset
+	if n > 256 {
+		n = 256
+	}
+	head := make([]byte, n)
+	read, err := file.ReadAt(head, 0)
+	if int64(read) < n && err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(head[:read])
+	return hex.EncodeToString(sum[:8])
 }

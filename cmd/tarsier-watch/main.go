@@ -51,6 +51,7 @@ func main() {
 		changes  = flag.String("changes", "", "append each change report to this file as JSON")
 		onChange = flag.String("on-change", "", "run this command when something changes, report on stdin")
 		zones    = flag.String("zones", "", "check traffic against a segmentation policy file")
+		state    = flag.String("state", "", "keep the inventory in this file across restarts")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -91,6 +92,7 @@ func main() {
 
 	w := &watcher{
 		path:        path,
+		stateFile:   *state,
 		res:         res,
 		htmlOut:     *htmlOut,
 		jsonOut:     *jsonOut,
@@ -101,7 +103,10 @@ func main() {
 		onChange:    *onChange,
 	}
 
-	if *catchup {
+	// State first: if it restores, the rotated logs on disk are history we
+	// already have, and replaying them would count every event a second time.
+	restored := w.loadState()
+	if *catchup && !restored {
 		w.replayRotated()
 	}
 	w.run(*poll, *every)
@@ -122,6 +127,9 @@ type watcher struct {
 	changesOut  string
 	onChange    string
 	baseline    inventory.Snapshot
+
+	stateFile string
+	resume    identify.Position
 
 	events  int
 	skipped int
@@ -160,9 +168,73 @@ func (w *watcher) replayRotated() {
 		len(files), plural(len(files), "log", "logs"), comma(w.events)))
 }
 
+// loadState restores a previous run, reporting whether it managed to.
+//
+// A missing file is the ordinary first start and says nothing. A corrupt or
+// foreign one is reported and then ignored: rebuilding from the logs on disk is
+// a known-good fallback, and refusing to start over a stale cache would be a
+// poor trade for a process meant to run for months.
+func (w *watcher) loadState() bool {
+	if w.stateFile == "" {
+		return false
+	}
+	f, err := os.Open(w.stateFile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			warn("ignoring unreadable state " + w.stateFile + ": " + err.Error())
+		}
+		return false
+	}
+	defer f.Close()
+
+	pos, err := w.res.Load(f)
+	if err != nil {
+		warn("ignoring state " + w.stateFile + ": " + err.Error() + " — rebuilding from the logs on disk")
+		return false
+	}
+	w.resume = pos
+	// The running total comes back with the model. Without this the report would
+	// claim to have seen only what arrived since the restart, which is the sort
+	// of number people quote in a meeting.
+	for _, n := range w.res.EventCounts() {
+		w.events += n
+	}
+	w.say(fmt.Sprintf("restored %d %s from %s",
+		len(w.res.Devices()), plural(len(w.res.Devices()), "device", "devices"), w.stateFile))
+	return true
+}
+
+// saveState writes the model and where we had read to.
+func (w *watcher) saveState(f *tail.Follower) {
+	if w.stateFile == "" {
+		return
+	}
+	offset, sig := f.Position()
+	err := writeAtomic(w.stateFile, func(out io.Writer) error {
+		return w.res.Save(out, identify.Position{Source: w.path, Offset: offset, Sig: sig})
+	})
+	if err != nil {
+		warn("writing " + w.stateFile + ": " + err.Error())
+	}
+}
+
 func (w *watcher) run(poll, every time.Duration) {
 	f := tail.New(w.path)
 	defer f.Close()
+
+	// Pick up where the last run stopped, when the log is demonstrably the same
+	// one. If it is not, reading it from the start is the safe direction: a few
+	// repeated events cost nothing, a silent gap costs the inventory.
+	if w.resume.Offset > 0 && w.resume.Source == w.path {
+		ok, err := f.Resume(w.resume.Offset, w.resume.Sig)
+		if err != nil {
+			warn("resuming " + w.path + ": " + err.Error())
+		} else if ok {
+			w.say(fmt.Sprintf("resumed at byte %s of %s", comma(int(w.resume.Offset)), w.path))
+		} else {
+			w.say(w.path + " has been rotated since the last run — reading it from the start")
+		}
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -182,6 +254,10 @@ func (w *watcher) run(poll, every time.Duration) {
 		warn("reading " + w.path + ": " + err.Error())
 	}
 	w.refresh()
+	// Save immediately rather than waiting for the first change. A process that
+	// only writes its state when something happens has no state at all on a
+	// quiet network, which is exactly when a restart would go unnoticed.
+	w.saveState(f)
 
 	// The first report compares against the network as we found it, not against
 	// nothing — otherwise every device on site would be announced as new.
@@ -200,6 +276,7 @@ func (w *watcher) run(poll, every time.Duration) {
 		case <-stop:
 			w.say("stopping")
 			w.refresh()
+			w.saveState(f)
 			return
 
 		case <-pollTick.C:
@@ -226,6 +303,7 @@ func (w *watcher) run(poll, every time.Duration) {
 				continue
 			}
 			w.refresh()
+			w.saveState(f)
 			w.dirty = false
 
 		case <-notifyTick:
@@ -561,10 +639,17 @@ flags:
   -poll 2s        how often to check the log for new data
   -retain 30d     forget devices silent for longer than this (0 keeps everything)
   -catchup        replay the rotated logs beside the live file on start (default true)
+  -state FILE     keep the inventory across restarts, so the window outlives log rotation
+  -zones FILE     check traffic against a segmentation policy
   -notify 1h      how often to report what changed (0 disables)
   -changes FILE   append each change report to this file, one JSON object per line
   -on-change CMD  run this when something changes, with the report on stdin
   -q              only report problems
+
+With -state the window is no longer capped by your logrotate settings: the
+inventory is restored on start and following resumes at the byte it stopped at,
+so a restart neither forgets the network nor counts the same events twice. The
+state is conclusions, never traffic — a month of it is tens of megabytes.
 
 Change reports are silent when nothing changed. The command given to -on-change
 runs through the shell with the readable report on stdin and the counts in the
