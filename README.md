@@ -80,11 +80,21 @@ On a stock RHEL-family box, running as a user in the `suricata` group is enough.
 Prebuilt binaries, no toolchain:
 
 ```bash
-curl -LO https://github.com/kapoordeepanshu/tarsier/releases/latest/download/tarsier-scan-linux-amd64
-curl -LO https://github.com/kapoordeepanshu/tarsier/releases/latest/download/SHA256SUMS.txt
+base=https://github.com/kapoordeepanshu/tarsier/releases/latest/download
+for tool in tarsier-scan tarsier-watch tarsier-diff; do
+  curl -fLO "$base/${tool}-linux-amd64"
+done
+curl -fLO "$base/SHA256SUMS.txt"
 sha256sum --ignore-missing -c SHA256SUMS.txt
-sudo install -m 0755 tarsier-scan-linux-amd64 /usr/local/bin/tarsier-scan
+
+for tool in tarsier-scan tarsier-watch tarsier-diff; do
+  sudo install -m 0755 "${tool}-linux-amd64" "/usr/local/bin/${tool}"
+done
 ```
+
+Three tools, and you can stop after the first if all you want is a report:
+`tarsier-scan` reads a log and exits, `tarsier-watch` follows one and keeps a report current, and
+`tarsier-diff` compares two snapshots.
 
 Builds are published for `linux/amd64`, `linux/arm64`, `linux/armv7`, **`freebsd/amd64`**
 (OPNsense and pfSense, where most of the world's dormant Suricata installs live), macOS on both
@@ -103,7 +113,7 @@ cd tarsier
 go build ./cmd/tarsier-scan ./cmd/tarsier-watch ./cmd/tarsier-diff
 ```
 
-`tarsier-watch` and `tarsier-diff` are currently source-only; the release ships `tarsier-scan`.
+Every tool is published for every target, so building is for contributors rather than operators.
 
 </details>
 
