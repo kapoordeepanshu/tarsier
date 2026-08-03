@@ -37,6 +37,15 @@ type Snapshot struct {
 
 	Devices  []Device  `json:"devices"`
 	Findings []Finding `json:"findings"`
+	// Identities is the same data seen from the other side: who signed in
+	// where. Additive, so a consumer written against schema 1 keeps working.
+	Identities []Identity `json:"identities,omitempty"`
+}
+
+// Identity is one account and the addresses it was seen signing in from.
+type Identity struct {
+	User    string   `json:"user"`
+	Devices []string `json:"devices"`
 }
 
 // Device is one resolved thing on the network, in its exported form.
@@ -171,6 +180,14 @@ func Build(source string, events, skipped int, devices []*identify.Device,
 			Severity: f.Severity.String(), Kind: f.Kind, Device: f.Device,
 			Title: f.Title, Detail: f.Detail, Fix: f.Fix,
 		})
+	}
+
+	for _, id := range identify.Identities(devices) {
+		ips := make([]string, 0, len(id.Devices))
+		for _, d := range id.Devices {
+			ips = append(ips, d.IP)
+		}
+		snap.Identities = append(snap.Identities, Identity{User: id.User, Devices: ips})
 	}
 
 	return snap

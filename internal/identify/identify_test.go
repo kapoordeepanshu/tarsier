@@ -319,3 +319,41 @@ func repeat(line string, n int) []string {
 	}
 	return out
 }
+
+// TestIdentitiesGroupUsersAcrossDevices is the "who" half of the inventory.
+// The same account on two machines has to come back as one person on two
+// machines, not as two unrelated facts.
+func TestIdentitiesGroupUsersAcrossDevices(t *testing.T) {
+	devices := resolve(t,
+		`{"timestamp":"2026-07-28T09:00:00.000000+0000","event_type":"krb5","src_ip":"10.0.1.20",`+
+			`"dest_ip":"10.0.0.10","krb5":{"cname":"jsmith","realm":"CORP.LOCAL"}}`,
+		`{"timestamp":"2026-07-28T09:05:00.000000+0000","event_type":"krb5","src_ip":"10.0.1.55",`+
+			`"dest_ip":"10.0.0.10","krb5":{"cname":"JSmith","realm":"CORP.LOCAL"}}`,
+		`{"timestamp":"2026-07-28T09:06:00.000000+0000","event_type":"krb5","src_ip":"10.0.1.60",`+
+			`"dest_ip":"10.0.0.10","krb5":{"cname":"apatel","realm":"CORP.LOCAL"}}`,
+	)
+
+	var list []*Device
+	for _, d := range devices {
+		list = append(list, d)
+	}
+	ids := Identities(list)
+	if len(ids) != 2 {
+		t.Fatalf("got %d identities, want 2: %+v", len(ids), ids)
+	}
+	// Busiest first, and the two spellings of the same name are one account.
+	if ids[0].User != "jsmith" || len(ids[0].Devices) != 2 {
+		t.Errorf("first identity = %q on %d devices, want jsmith on 2",
+			ids[0].User, len(ids[0].Devices))
+	}
+	if ids[1].User != "apatel" || len(ids[1].Devices) != 1 {
+		t.Errorf("second identity = %q on %d devices, want apatel on 1",
+			ids[1].User, len(ids[1].Devices))
+	}
+	// Machine accounts end in $ and are not people; they must not appear.
+	for _, id := range ids {
+		if strings.HasSuffix(id.User, "$") {
+			t.Errorf("machine account %q was listed as a person", id.User)
+		}
+	}
+}

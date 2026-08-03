@@ -353,6 +353,31 @@ report as everything else.
 
 ---
 
+## Who signs in where
+
+The inventory answers "what is on this network". The identity graph answers "who", which is the
+question that follows about four seconds later — and it needs no new collection, because Kerberos and
+SMB have been naming users on the wire the whole time.
+
+The report carries a **Who signs in where** panel, and `-json` carries the same thing:
+
+```json
+"identities": [
+  { "user": "jsmith",  "devices": ["10.0.1.20", "10.0.1.55"] },
+  { "user": "apatel",  "devices": ["10.0.1.60"] }
+]
+```
+
+It recomputes with the time filter, so it always describes the window on screen.
+
+**No finding comes out of this, on purpose.** The tempting one is "this account signed in from nine
+machines", and it would be wrong constantly: service accounts, shared kiosks, roaming profiles and
+admin tooling all look exactly like a stolen credential from out here. A number that fires on
+ordinary Tuesdays gets ignored, and then it is worth less than nothing. What you want is to look,
+recognise your own network, and notice the one line that surprises you.
+
+---
+
 ## Configure Suricata
 
 Most installs log alerts only. Tarsier needs the metadata. One file, one restart, fully reversible —
@@ -565,9 +590,6 @@ your rotated logs on restart, which is enough for thirty days on any sensor that
 Persisting it would let the window outlive your log rotation instead of being bounded by it. The
 conclusions are small — a device record and an hourly activity byte — so this is tens of megabytes,
 not hundreds of gigabytes.
-
-**The identity graph** — user → devices → services, from the Kerberos, LDAP and SMB names already
-being collected.
 
 **A server**, eventually, so history outlives one sensor's local logs. It is last on purpose: the
 first four need no server, and adding one turns a five-minute deployment into a project.

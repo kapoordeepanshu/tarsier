@@ -449,6 +449,7 @@ footer a:hover{text-decoration:underline}
            data-s="{{.IP}} {{.Hostname}} {{.Identity}} {{.Class}} {{.Vendor}} {{.Model}} {{.Firmware}} {{.Serial}} {{.OTIDs}} {{.Users}}"
            data-unk="{{if .Unknown}}1{{else}}0{{end}}"
            data-named="{{if .Hostname}}1{{else}}0{{end}}"
+           data-users="{{.Users}}"
            style="--c:var(--c-{{.Class}})">
     <summary>
       <span class="ico" title="{{.ConfPct}}% confident">
@@ -564,6 +565,11 @@ footer a:hover{text-decoration:underline}
       <ul class="bars2" id="top-proto"></ul>
     </section>
     <section class="panel">
+      <h3>Who signs in where</h3>
+      <ul class="bars2" id="top-users"></ul>
+      <p class="panel-foot" id="users-foot"></p>
+    </section>
+    <section class="panel">
       <h3>Issues by severity</h3>
       <ul class="sevlist" id="sev-list"></ul>
       <p class="panel-foot" id="sev-foot"></p>
@@ -657,7 +663,7 @@ function activeIn(row){
 }
 
 function apply(){
-  var n=0, ident=0, named=0, cls={}, proto={}, sev={}, talkers=[], vis={};
+  var n=0, ident=0, named=0, cls={}, proto={}, sev={}, users={}, talkers=[], vis={};
   rows.forEach(function(row){
     var hit=activeIn(row);
     if(hit&&text) hit=row.dataset.s.toLowerCase().indexOf(text)>=0;
@@ -670,6 +676,12 @@ function apply(){
     cls[row.dataset.cls]=(cls[row.dataset.cls]||0)+1;
     (row.dataset.proto||"").split(" ").forEach(function(p){ if(p)proto[p]=(proto[p]||0)+1; });
     if(row.dataset.sev) sev[row.dataset.sev]=(sev[row.dataset.sev]||0)+1;
+    // The same data from the other side: who was signing in, and on how many
+    // machines. Counted from the visible rows so it always describes the window
+    // on screen rather than the whole file.
+    (row.dataset.users||"").split(/,\s*/).forEach(function(u){
+      if(u) users[u]=(users[u]||0)+1;
+    });
     // Weight by the share of activity inside the window, so "busiest" means
     // busiest during the selected period rather than overall.
     var a=row.dataset.a||"",tot=0,win=0;
@@ -722,6 +734,15 @@ function apply(){
       .map(function(t){return{lb:t.name,v:t.v,c:"var(--c-"+t.cls+")"}}),"events");
   drawBars("top-proto",Object.keys(proto).map(function(k){return{lb:k,v:proto[k]}})
       .sort(function(a,b){return b.v-a.v}).slice(0,6),"devices");
+  // An account on one machine is a person at a desk; an account on twenty is
+  // either infrastructure or a problem. No threshold is applied — service
+  // accounts and shared kiosks look identical to a stolen credential from out
+  // here, and a number that fires on ordinary Tuesdays gets ignored.
+  var userRows=Object.keys(users).map(function(k){return{lb:k,v:users[k]}})
+      .sort(function(a,b){return b.v-a.v||(a.lb<b.lb?-1:1)});
+  drawBars("top-users",userRows.slice(0,6),"devices");
+  var uf=document.getElementById("users-foot");
+  if(uf) uf.textContent=userRows.length?userRows.length+(userRows.length===1?" account seen":" accounts seen"):"";
   drawSev(sev);
 }
 
